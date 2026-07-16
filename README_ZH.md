@@ -229,9 +229,9 @@ npm run check:web
 
 静态输出写入 `gh-pages/`，基础路径为 `/GNM-Studio/`。生成文件夹不会提交到 Git；
 可重建源码保存在 `webapp-src` 分支。推送该分支后，`.github/workflows/pages.yml`
-会重新构建并通过 GitHub Pages artifact 部署。首次使用时，在仓库
-**Settings → Pages** 中把 Source 设为 **GitHub Actions**。主 CI 会检查 lint、
-桌面/网页前端构建、Pages 路径以及 Rust 测试。
+会为新仓库启用 Pages、重新构建并通过 GitHub Pages artifact 部署。若仓库策略阻止
+自动启用，请在 **Settings → Pages** 中把 Source 设为 **GitHub Actions**。主 CI
+会检查 lint、桌面/网页前端构建、Pages 路径以及 Rust 测试。
 
 构建独立 EXE：
 

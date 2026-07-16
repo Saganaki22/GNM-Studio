@@ -254,9 +254,10 @@ npm run check:web
 The static output is written to `gh-pages/` with a `/GNM-Studio/` base path.
 The generated folder is intentionally ignored by Git; rebuildable source lives
 on `webapp-src`. Pushing that branch runs `.github/workflows/pages.yml`, builds
-the folder, and deploys it through GitHub Pages artifacts. In repository
-**Settings → Pages**, select **GitHub Actions** as the source once. The main CI
-workflow validates lint, desktop/web frontend builds, Pages paths, and Rust tests.
+the folder, enables Pages for a new repository, and deploys it through GitHub
+Pages artifacts. If repository policy blocks automatic enablement, select
+**GitHub Actions** under **Settings → Pages** once. The main CI workflow validates
+lint, desktop/web frontend builds, Pages paths, and Rust tests.
 
 Build the standalone release executable:
 
