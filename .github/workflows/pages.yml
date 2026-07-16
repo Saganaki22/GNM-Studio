@@ -2,7 +2,7 @@ name: Deploy web edition
 
 on:
   push:
-    branches: [webapp-src]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build from webapp-src
+    name: Build webapp-src
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
