@@ -1,0 +1,60 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+  --bg: #080b10;
+  --surface: #0d1118;
+  --surface-2: #121822;
+  --surface-3: #17202b;
+  --line: rgba(210, 226, 246, 0.1);
+  --line-strong: rgba(210, 226, 246, 0.17);
+  --muted: #778398;
+  --muted-2: #9aa6b8;
+  --text: #edf2f8;
+  --accent: #54ddb2;
+  --accent-rgb: 84 221 178;
+  --accent-2: #77a7ff;
+  --warning: #ffb45d;
+  --danger: #ff5e66;
+}
+
+[data-accent="teal"] { --accent: #54ddb2; --accent-rgb: 84 221 178; --accent-2: #77a7ff; }
+[data-accent="blue"] { --accent: #5b9cff; --accent-rgb: 91 156 255; --accent-2: #69d5ff; }
+[data-accent="green"] { --accent: #62d978; --accent-rgb: 98 217 120; --accent-2: #54cfc1; }
+[data-accent="red"] { --accent: #ff6974; --accent-rgb: 255 105 116; --accent-2: #ff9b6c; }
+[data-accent="yellow"] { --accent: #f2bd4e; --accent-rgb: 242 189 78; --accent-2: #ff8f70; }
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e9eef3;
+  --surface: #f7f9fb;
+  --surface-2: #edf2f6;
+  --surface-3: #e2e9ef;
+  --line: rgba(32, 49, 64, 0.12);
+  --line-strong: rgba(32, 49, 64, 0.2);
+  --muted: #697887;
+  --muted-2: #506171;
+  --text: #17222d;
+  --warning: #bd741d;
+  --danger: #d73e4a;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+body { user-select: none; -webkit-user-select: none; }
+input[type="text"], input[type="search"], input[type="url"], input[type="email"], input[type="password"], textarea, [contenteditable="true"], .toast-copy pre { user-select: text; -webkit-user-select: text; }
+img, svg { -webkit-user-drag: none; }
+button, select, input { font: inherit; }
+button { color: inherit; }
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid rgb(var(--accent-rgb) / .75);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #283342; border-radius: 8px; }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: #a8b5c1; }

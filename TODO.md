@@ -1,0 +1,79 @@
+# GNM Studio build checklist
+
+## Completed in the first implementation pass
+
+- [x] Scaffold Tauri 2, Vite, React, and TypeScript.
+- [x] Build a modern responsive three-panel creator UI.
+- [x] Persist UI and capture preferences locally.
+- [x] Add camera and microphone dropdowns with device hot-plug handling.
+- [x] Add microphone mute, monitoring, RMS meter, peak hold, and clipping state.
+- [x] Bundle MediaPipe WASM and Face Landmarker model for offline use.
+- [x] Run face inference in a worker and expose 478 landmarks, 52 blendshapes, and pose matrix.
+- [x] Add webcam, landmark, avatar, mirror, opacity, and wireframe toggles.
+- [x] Add neutral-pose countdown and calibration state.
+- [x] Add Blender-style orbit, pan, zoom, cardinal views, and reset controls.
+- [x] Add a pointer-following light with button and `L`-key bind/freeze controls.
+- [x] Add per-expression freeze locks.
+- [x] Add informative copyable error toasts through the native Tauri clipboard API.
+- [x] Fix MediaPipe ES-module worker loading (`ModuleFactory not set`) with the module-aware WASM loader.
+- [x] Repair viewport Overlay/Camera/Avatar mode buttons and active-state indicators.
+- [x] Make Capture/Create/Edit/Export navigation and fullscreen controls functional.
+- [x] Decouple manual expression sliders from live tracker availability and add illuminated freeze locks.
+- [x] Add dark/light themes, five accents, and stationary 80–125% interface scaling.
+- [x] Add studio/solid/transparent head backgrounds and pointer-light enable/intensity controls.
+- [x] Replace default Tauri branding with the supplied head SVG and generated Windows icon set.
+- [x] Show the manifest version with native GitHub/release links in Settings.
+- [x] Add root Apache-2.0 licensing and normal plus UPX portable packaging.
+- [x] Replace native FPS spinners with clamped minus/value/plus controls.
+- [x] Explain motion-recording readiness and allow manual Avatar/Composite recording without tracking.
+- [x] Return real save paths, distinguish cancellation from failure, and add Show in folder export toasts.
+- [x] Add Windows-safe local date/time-to-seconds suffixes to every export filename.
+- [x] Add post-export MediaPipe health checks, stalled-frame recovery, and an always-available Reload tracker control.
+- [x] Return the viewport to live tracking when recorded-performance playback stops instead of retaining a stale final frame.
+- [x] Add validated GNM motion JSON import with neutral/FPS restoration and clear motion-only diagnostics.
+- [x] Make recorded-motion playback seekable by click/drag and resume from the selected timestamp.
+- [x] Add a Return to Live control that clears playback override without deleting the take.
+- [x] Keep recording, playback, timeline, FPS, import, and export controls aligned on one responsive row.
+- [x] Add a dedicated lower-jaw morph driven by MediaPipe jaw/lip separation for visible wide-mouth opening.
+- [x] Preserve zoom and pan when snapping cardinal views; reserve full reframing for Reset view.
+- [x] Remove the redundant aggregate capture dot while preserving per-camera, per-microphone, and tracker status.
+- [x] Add an experimental five-tone repeated PBR skin material with scale, rotation, and seam-feather controls.
+- [x] Make experimental skin collapsed/off by default and prevent tone/feather updates from darkening the live material.
+- [x] Restore GPU-first MediaPipe tracking with explicit CPU fallback diagnostics.
+- [x] Match landmarks and avatar placement to the webcam's object-fit cover crop.
+- [x] Unify mirrored webcam, landmarks, translation, yaw, and roll with a quick mirror control.
+- [x] Gate neutral calibration on orange/green face placement and reset the countdown when alignment is lost.
+- [x] Add a persisted right-click Auto/GPU/CPU selector with checked and unavailable states.
+- [x] Correct the MediaPipe pitch sign so looking up/down matches the user in both mirror modes.
+- [x] Cache-bust the packaged EXE filename so Windows shows the embedded head icon immediately.
+- [x] Add independent camera, tracking, and export FPS controls.
+- [x] Add optional capture permissions so camera-less users can keep using manual GNM tools.
+- [x] Add stronger adaptive 0–100% facial smoothing plus separate head-motion smoothing and bypass toggles.
+- [x] Reject small one-frame face/head tracking spikes while preserving sustained motion response.
+- [x] Add persistent aspect-preserving custom image backgrounds with replace/remove and zoom controls.
+- [x] Make recording composition obey the enabled camera/avatar layer switches.
+- [x] Add adjustable 1–50 Mbps video and 64–320 kbps audio encoder quality controls.
+- [x] Add Auto/WebCodecs/System FFmpeg MP4 backends with PATH probing and executable selection.
+- [x] Make calibration a temporary camera-only view and apply its neutral expression/orientation baseline.
+- [x] Record timestamped motion channels and optional composited video.
+- [x] Add basic recorded-performance playback.
+- [x] Export raw motion JSON.
+- [x] Export H.264/AAC MP4 using direct WebView2 recording or a local WebCodecs conversion fallback, with optional WebM source export.
+- [x] Convert the GNM H5 semantic decoder into 20 stable runtime expressions.
+- [x] Generate and render an actual GNM v3 GLB rather than the prototype Facecap mesh.
+- [x] Export animated GNM GLB files for Blender.
+- [x] Implement the full released GNM deformation path in native Rust.
+- [x] Wire identity seed and demographic controls to the extracted semantic decoder.
+- [x] Verify Rust NPZ loading plus neutral and posed Python parity with automated tests.
+- [x] Build a self-contained release EXE and portable ZIP/checksum workflow.
+- [x] Add a `/GNM-Studio/` GitHub Pages web build, static-path verification, CI, and `webapp-src` deployment workflow.
+
+## Remaining production work
+
+- [ ] Fit a high-quality 52-to-383 MediaPipe/GNM retargeting matrix from matched landmarks.
+- [ ] Add non-destructive playback trimming and interpolated retiming.
+- [ ] Add deterministic offline MP4 rendering at arbitrary resolution/FPS.
+- [ ] Add exact baked Alembic export through a statically linked Alembic writer.
+- [ ] Add transparent PNG/WebM/ProRes output modes.
+- [ ] Add code signing and automated NSIS/MSI release jobs.
+- [ ] Profile lower-end Intel/AMD/NVIDIA systems before considering optional GPU compute.

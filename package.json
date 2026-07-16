@@ -1,0 +1,45 @@
+{
+  "name": "gnm-studio",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:web": "vite --mode web",
+    "build": "tsc -b && vite build",
+    "build:web": "tsc -b && vite build --mode web",
+    "check:web": "node tools/check_pages_build.mjs",
+    "tauri": "tauri",
+    "check": "npm run build && cargo check --manifest-path src-tauri/Cargo.toml",
+    "test": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml",
+    "build:gnm": "python tools/build_gnm_runtime.py",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@mediabunny/aac-encoder": "^1.50.8",
+    "@mediapipe/tasks-vision": "^0.10.35",
+    "@phosphor-icons/react": "^2.1.10",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "lucide-react": "^1.24.0",
+    "mediabunny": "^1.50.8",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.1",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}
