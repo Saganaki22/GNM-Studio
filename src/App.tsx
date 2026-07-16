@@ -44,6 +44,7 @@ const initialSettings: AppSettings = {
 
 const repositoryUrl = "https://github.com/Saganaki22/GNM-Studio";
 const releasesUrl = `${repositoryUrl}/releases`;
+const settingsStorageVersion = 2;
 const accentOptions = ["teal", "blue", "green", "red", "yellow"] as const;
 type AccentOption = (typeof accentOptions)[number];
 type Workspace = "capture" | "create" | "edit" | "export";
@@ -63,6 +64,26 @@ function timestampedFilename(extension: string, suffix = "") {
   const pad = (value: number) => String(value).padStart(2, "0");
   const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
   return `GNM-Studio_${timestamp}${suffix}.${extension}`;
+}
+
+const recorderMimeTypes = [
+  "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+  "video/mp4;codecs=avc1.42E01E",
+  "video/mp4",
+  "video/webm;codecs=vp9,opus",
+  "video/webm;codecs=vp8,opus",
+  "video/webm",
+];
+
+function preferredRecorderMimeType() {
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("This browser does not provide MediaRecorder video capture. Use a current Chromium-based browser.");
+  }
+  return recorderMimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) ?? "video/webm";
+}
+
+function afterBrowserPaint() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 }
 
 function assessFaceAlignment(frame: TrackingFrame | null, mirror: boolean): FaceAlignment {
@@ -244,12 +265,24 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem("gnm-studio-settings");
     if (!saved) return initialSettings;
-    const parsed = JSON.parse(saved) as Partial<AppSettings>;
+    let parsed: Partial<AppSettings>;
+    try {
+      parsed = JSON.parse(saved) as Partial<AppSettings>;
+    } catch {
+      localStorage.removeItem("gnm-studio-settings");
+      return initialSettings;
+    }
+    const savedStorageVersion = Number(localStorage.getItem("gnm-studio-settings-version") ?? 0);
     const upgradingSingleSmoothingControl = parsed.motionSmoothing === undefined;
     return {
       ...initialSettings,
       ...parsed,
       videoEncoderBackend: isDesktopRuntime ? parsed.videoEncoderBackend ?? initialSettings.videoEncoderBackend : "webcodecs",
+      // Version 2 makes the experimental material opt-in even for people whose
+      // older local preference had it enabled. Later choices remain persistent.
+      skinTextureEnabled: savedStorageVersion < settingsStorageVersion
+        ? false
+        : parsed.skinTextureEnabled ?? initialSettings.skinTextureEnabled,
       trackingSmoothing: upgradingSingleSmoothingControl
         ? Math.max(0.72, parsed.trackingSmoothing ?? initialSettings.trackingSmoothing)
         : parsed.trackingSmoothing ?? initialSettings.trackingSmoothing,
@@ -284,6 +317,7 @@ function App() {
   const [lastVideoQuality, setLastVideoQuality] = useState({ videoBitrate: 12_000_000, audioBitrate: 192_000 });
   const [videoExportProgress, setVideoExportProgress] = useState<number | null>(null);
   const [videoExportBackend, setVideoExportBackend] = useState<"webcodecs" | "ffmpeg" | null>(null);
+  const [motionVideoRendering, setMotionVideoRendering] = useState(false);
   const [ffmpegStatus, setFfmpegStatus] = useState<"unknown" | "checking" | "available" | "unavailable">("unknown");
   const [ffmpegVersion, setFfmpegVersion] = useState("");
   const [backgroundImageUrl, setBackgroundImageUrl] = useState<string | null>(null);
@@ -366,6 +400,7 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("gnm-studio-settings", JSON.stringify(settings));
+    localStorage.setItem("gnm-studio-settings-version", String(settingsStorageVersion));
   }, [settings]);
 
   useEffect(() => {
@@ -1178,15 +1213,7 @@ function App() {
         if (!settings.muted) {
           micStreamRef.current?.getAudioTracks().forEach((track) => stream.addTrack(track.clone()));
         }
-        const mimeTypes = [
-          "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-          "video/mp4;codecs=avc1.42E01E",
-          "video/mp4",
-          "video/webm;codecs=vp9,opus",
-          "video/webm;codecs=vp8,opus",
-          "video/webm",
-        ];
-        const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) ?? "video/webm";
+        const mimeType = preferredRecorderMimeType();
         const videoBitrate = settings.videoBitrateMbps * 1_000_000;
         const audioBitrate = settings.audioBitrateKbps * 1_000;
         const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: videoBitrate, audioBitsPerSecond: audioBitrate });
@@ -1367,13 +1394,117 @@ function App() {
     }
   };
 
+  const renderRecordedMotionVideo = async () => {
+    if (!recordedFrames.length) throw new Error("There is no recorded motion take to render.");
+    const canvas = avatarCanvasRef.current;
+    if (!canvas) throw new Error("The rendered capture surface is not ready yet.");
+    if (typeof canvas.captureStream !== "function") {
+      throw new Error("This browser cannot capture the rendered avatar canvas. Use a current Chromium-based browser.");
+    }
+
+    const mimeType = preferredRecorderMimeType();
+    const quality = {
+      videoBitrate: settings.videoBitrateMbps * 1_000_000,
+      audioBitrate: settings.audioBitrateKbps * 1_000,
+    };
+    const duration = Math.max(recordedFrames.at(-1)?.timestamp ?? 0, 500);
+    const landmarks = neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? [];
+    const stream = canvas.captureStream(settings.exportFps);
+    const recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: quality.videoBitrate,
+    });
+    const chunks: Blob[] = [];
+    let animation = 0;
+    let recorderFailure: Error | null = null;
+
+    const completed = new Promise<Blob>((resolve, reject) => {
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      recorder.onerror = (event) => {
+        recorderFailure = new Error(`The browser recorder failed while rendering motion (${event.type}).`);
+      };
+      recorder.onstop = () => {
+        if (recorderFailure) {
+          reject(recorderFailure);
+        } else if (!chunks.length) {
+          reject(new Error("The browser recorder completed without producing video data."));
+        } else {
+          resolve(new Blob(chunks, { type: recorder.mimeType || mimeType }));
+        }
+      };
+    });
+
+    try {
+      if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
+      playbackAnimationRef.current = null;
+      setPlaying(false);
+      setMotionVideoRendering(true);
+      setPlaybackFrame(playbackTrackingFrame(recordedFrames[0], landmarks));
+      setRecordingElapsed(0);
+      setLastVideoQuality(quality);
+      await afterBrowserPaint();
+
+      recorder.start(250);
+      const started = performance.now();
+      await new Promise<void>((resolve) => {
+        const tick = (now: number) => {
+          const elapsed = Math.min(duration, now - started);
+          const recorded = recordedFrameAtTime(recordedFrames, elapsed);
+          setPlaybackFrame(playbackTrackingFrame(recorded, landmarks));
+          setRecordingElapsed(elapsed);
+          setVideoExportProgress(Math.min(0.45, (elapsed / duration) * 0.45));
+          if (elapsed < duration && !recorderFailure) {
+            animation = requestAnimationFrame(tick);
+          } else {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }
+        };
+        animation = requestAnimationFrame(tick);
+      });
+      if (recorder.state !== "inactive") recorder.stop();
+      const rendered = await completed;
+      setLastVideo(rendered);
+      return { video: rendered, quality };
+    } finally {
+      if (animation) cancelAnimationFrame(animation);
+      if (recorder.state !== "inactive") recorder.stop();
+      stream.getTracks().forEach((track) => track.stop());
+      setMotionVideoRendering(false);
+      setPlaybackFrame(null);
+      setRecordingElapsed(duration);
+    }
+  };
+
   const exportVideo = async () => {
-    if (!lastVideo) return;
+    if (!lastVideo && !recordedFrames.length) {
+      pushToast({
+        type: "warning",
+        title: "Record a take before exporting",
+        message: "Motion data can be rendered as an avatar MP4, while Avatar video and Camera + avatar modes preserve their directly recorded video source.",
+      });
+      return;
+    }
     if (videoExportProgress !== null) return;
     try {
       let video = lastVideo;
-      if (!video.type.includes("mp4")) {
+      let quality = lastVideoQuality;
+      let renderedFromMotion = false;
+      if (!video) {
+        renderedFromMotion = true;
         setVideoExportProgress(0);
+        setVideoExportBackend("webcodecs");
+        pushToast({
+          type: "info",
+          title: "Rendering motion take to video",
+          message: "The avatar will play once in real time, then the browser will encode the result as MP4. Keep this tab visible until export finishes.",
+          duration: 8_000,
+        });
+        const rendered = await renderRecordedMotionVideo();
+        video = rendered.video;
+        quality = rendered.quality;
+      }
+      if (!video.type.includes("mp4")) {
+        if (!renderedFromMotion) setVideoExportProgress(0);
         let useSystemFfmpeg = false;
         if (settings.videoEncoderBackend !== "webcodecs" && "__TAURI_INTERNALS__" in window) {
           const probe = await checkFfmpeg(settings.ffmpegPath, false);
@@ -1391,7 +1522,7 @@ function App() {
             duration: 7_000,
           });
           const { convertWithSystemFfmpeg } = await import("./lib/systemFfmpeg");
-          video = await convertWithSystemFfmpeg(video, settings.ffmpegPath, lastVideoQuality, setVideoExportProgress);
+          video = await convertWithSystemFfmpeg(video, settings.ffmpegPath, quality, setVideoExportProgress);
         } else {
           setVideoExportBackend("webcodecs");
           pushToast({
@@ -1401,8 +1532,16 @@ function App() {
             duration: 7_000,
           });
           const { convertToMp4 } = await import("./lib/mp4Export");
-          video = await convertToMp4(video, lastVideoQuality, setVideoExportProgress);
+          video = await convertToMp4(
+            video,
+            quality,
+            renderedFromMotion
+              ? (progress) => setVideoExportProgress(0.45 + progress * 0.55)
+              : setVideoExportProgress,
+          );
         }
+      } else if (renderedFromMotion) {
+        setVideoExportProgress(1);
       }
       const result = await saveBlob(video, timestampedFilename("mp4"));
       showSaveResult("MP4 export complete", "The H.264 MP4 recording", result);
@@ -1641,7 +1780,7 @@ function App() {
           frame={displayedFrame}
           neutralFrame={neutralFrame}
           showWebcam={calibrating || settings.showWebcam}
-          showAvatar={!calibrating && settings.showAvatar}
+          showAvatar={!calibrating && (motionVideoRendering || settings.showAvatar)}
           showLandmarks={!calibrating && settings.showLandmarks}
           mirror={settings.mirror}
           opacity={settings.avatarOpacity}
@@ -1665,8 +1804,8 @@ function App() {
           identityVertices={identityVertices}
           manualExpressions={manualExpressions}
           frozenExpressions={frozenExpressions}
-          recordingMode={settings.recordingMode}
-          recordingActive={recordingState !== "idle"}
+          recordingMode={motionVideoRendering ? "avatar" : settings.recordingMode}
+          recordingActive={motionVideoRendering || recordingState !== "idle"}
           resetViewSignal={resetViewSignal}
           onCancelCalibration={cancelCalibration}
           onCompositeCanvas={useCallback((canvas: HTMLCanvasElement | null) => { avatarCanvasRef.current = canvas; }, [])}
@@ -1730,8 +1869,8 @@ function App() {
         <AudioMeter devices={microphones} selectedId={settings.microphoneId} onSelect={(id) => updateSetting("microphoneId", id)} level={audioLevel} peak={audioPeak} muted={settings.muted} onToggleMute={() => updateSetting("muted", !settings.muted)} monitoring={monitoring} onToggleMonitoring={() => setMonitoring((value) => !value)} onRefresh={enumerateDevices} />
         <section className="transport">
           <div className="transport-main">
-            {recordingState === "idle" ? <button className="record-button" onClick={startRecording} disabled={calibrating} title={calibrating ? "Finish or cancel neutral calibration before recording" : !trackingFrame && settings.recordingMode === "motion" ? "Motion mode needs a detected face" : "Start recording"}><span />Record</button> : <button className="stop-button" onClick={stopRecording}><CircleStop size={18} />Stop</button>}
-            <button className="icon-button transport-icon" onClick={togglePause} disabled={recordingState === "idle" && !recordedFrames.length} title={playing ? "Pause playback" : recordingState === "recording" ? "Pause recording" : recordingState === "paused" ? "Resume recording" : "Play recorded take"}>{recordingState === "recording" || playing ? <Pause size={18} /> : <Play size={18} />}</button>
+            {recordingState === "idle" ? <button className="record-button" onClick={startRecording} disabled={calibrating || videoExportProgress !== null} title={calibrating ? "Finish or cancel neutral calibration before recording" : videoExportProgress !== null ? "Wait for video export to finish" : !trackingFrame && settings.recordingMode === "motion" ? "Motion mode needs a detected face" : "Start recording"}><span />Record</button> : <button className="stop-button" onClick={stopRecording}><CircleStop size={18} />Stop</button>}
+            <button className="icon-button transport-icon" onClick={togglePause} disabled={videoExportProgress !== null || (recordingState === "idle" && !recordedFrames.length)} title={playing ? "Pause playback" : recordingState === "recording" ? "Pause recording" : recordingState === "paused" ? "Resume recording" : "Play recorded take"}>{recordingState === "recording" || playing ? <Pause size={18} /> : <Play size={18} />}</button>
             {(playbackFrame || playing) && <button className="secondary-button return-live" onClick={returnToLiveTracking} title="Stop playback and return the avatar to the active camera"><RefreshCw size={14} /><span>Return to Live</span></button>}
             <div className="timecode"><strong>{formatTime(recordingElapsed)}</strong><span>{recordedFrames.length || recordingFramesRef.current.length} frames</span></div>
           </div>
@@ -1746,7 +1885,7 @@ function App() {
                 max={timelineDuration}
                 step="1"
                 value={timelinePosition}
-                disabled={recordingState !== "idle" || !recordedFrames.length}
+                disabled={recordingState !== "idle" || videoExportProgress !== null || !recordedFrames.length}
                 aria-label="Recorded motion position"
                 aria-valuetext={`${formatTime(timelinePosition)} of ${formatTime(recordedDuration)}`}
                 onInput={(event) => seekPlayback(Number(event.currentTarget.value))}
@@ -1754,7 +1893,7 @@ function App() {
             </div>
             <div className="timeline-labels"><span>00:00</span><span>{formatTime(recordedFrames.length ? recordedDuration : timelineDuration)}</span></div>
           </div>
-          <div className="export-cluster" data-workspace-target="export"><FpsInput compact label="Export FPS" value={settings.exportFps} onChange={(value) => updateSetting("exportFps", value)} /><button className="secondary-button motion-import" onClick={() => motionInputRef.current?.click()} disabled={recordingState !== "idle" || calibrating} title="Import a GNM Studio motion JSON file"><Upload size={15} /><span>Import JSON</span></button><button className="secondary-button" onClick={exportMotion} disabled={!recordedFrames.length} title="Export motion JSON"><Download size={16} /><span>JSON</span></button><button className="secondary-button" onClick={exportGlb} disabled={!recordedFrames.length} title="Export animated GLB for Blender"><Download size={16} /><span>GLB</span></button>{lastVideo && !lastVideo.type.includes("mp4") && <button className="secondary-button source-export" onClick={exportWebmSource} disabled={videoExportProgress !== null} title="Export optional unconverted WebM source"><Download size={14} /><span>WebM source</span></button>}<button className="primary-button" onClick={exportVideo} disabled={!lastVideo || videoExportProgress !== null} title="Export H.264/AAC MP4"><Download size={16} /><span>{videoExportProgress !== null ? videoExportBackend === "ffmpeg" ? "FFmpeg rendering…" : `Rendering ${Math.round(videoExportProgress * 100)}%` : "MP4"}</span></button></div>
+          <div className="export-cluster" data-workspace-target="export"><FpsInput compact label="Export FPS" value={settings.exportFps} onChange={(value) => updateSetting("exportFps", value)} /><button className="secondary-button motion-import" onClick={() => motionInputRef.current?.click()} disabled={recordingState !== "idle" || calibrating || videoExportProgress !== null} title="Import a GNM Studio motion JSON file"><Upload size={15} /><span>Import JSON</span></button><button className="secondary-button" onClick={exportMotion} disabled={!recordedFrames.length || videoExportProgress !== null} title="Export motion JSON"><Download size={16} /><span>JSON</span></button><button className="secondary-button" onClick={exportGlb} disabled={!recordedFrames.length || videoExportProgress !== null} title="Export animated GLB for Blender"><Download size={16} /><span>GLB</span></button>{lastVideo && !lastVideo.type.includes("mp4") && <button className="secondary-button source-export" onClick={exportWebmSource} disabled={videoExportProgress !== null} title="Export optional unconverted WebM source"><Download size={14} /><span>WebM source</span></button>}<button className="primary-button" onClick={exportVideo} disabled={(!lastVideo && !recordedFrames.length) || videoExportProgress !== null || recordingState !== "idle"} title={lastVideo ? "Export the directly recorded take as H.264/AAC MP4" : recordedFrames.length ? "Render the recorded motion take as an avatar MP4" : "Record a motion or video take before exporting MP4"}><Download size={16} /><span>{videoExportProgress !== null ? videoExportBackend === "ffmpeg" ? "FFmpeg rendering…" : `Rendering ${Math.round(videoExportProgress * 100)}%` : "MP4"}</span></button></div>
         </section>
       </footer>
       <ToastCenter

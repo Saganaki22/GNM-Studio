@@ -67,6 +67,8 @@
 - [x] Verify Rust NPZ loading plus neutral and posed Python parity with automated tests.
 - [x] Build a self-contained release EXE and portable ZIP/checksum workflow.
 - [x] Add a `/GNM-Studio/` GitHub Pages web build, static-path verification, CI, and `webapp-src` deployment workflow.
+- [x] Let recorded motion render to MP4 in the web/desktop UI instead of leaving video export disabled.
+- [x] Migrate existing preferences once so experimental skin microtexture starts disabled while remaining user-toggleable.
 
 ## Remaining production work
 

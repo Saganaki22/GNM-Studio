@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.0.0-54ddb2" alt="版本 v1.0.0"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.0.1-54ddb2" alt="版本 v1.0.1"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages 网页版"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 与 React">
@@ -22,7 +22,7 @@
 
 作者：[Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.0.0` 将 Google GNM Head v3、MediaPipe Face Landmarker、
+GNM Studio `1.0.1` 将 Google GNM Head v3、MediaPipe Face Landmarker、
 Three.js、Rust 与 Tauri 整合到便携式 Windows 应用，并提供用于在线体验跟踪与
 动画流程的 GitHub Pages 版本。它可通过摄像头驱动头像、录制面部动作和视频，
 并把动画导出到 Blender。普通用户无需安装 Python、Node.js、Rust 或 CUDA；
@@ -33,7 +33,7 @@ Three.js、Rust 与 Tauri 整合到便携式 Windows 应用，并提供用于在
 1. 从 [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases)
    下载最新的 Windows x64 压缩包。
 2. 解压到可写目录，例如 `C:\AI\GNM-Studio\`。
-3. 运行 `GNM-Studio-v1.0.0.exe`。
+3. 运行 `GNM-Studio-v1.0.1.exe`。
 4. 如需实时捕捉，请允许摄像头和/或麦克风权限；手动编辑可选择
    **Continue without capture**。
 5. 跟踪录制前保持放松的中性表情，并点击 **Calibrate neutral**。
@@ -137,18 +137,19 @@ Windows 版在运行时**不会下载模型**。发布版 EXE 已包含：
 ## 录制与导出
 
 **Capture mode** 决定 Record 按钮保存什么，不会改变实时视口。**Motion data**
-记录可编辑的跟踪通道用于 JSON/GLB；**Avatar video** 只录制渲染头像和背景；
+记录可编辑的跟踪通道用于 JSON/GLB，录制后也可以在本地渲染为无声头像 MP4；
+**Avatar video** 只录制渲染头像和背景；
 **Camera + avatar** 把已启用的图层合成为一个视频。视频模式会录入麦克风，除非静音。
 
 | 格式 | 内容 | 常见用途 |
 | --- | --- | --- |
 | JSON | 带时间戳的 MediaPipe 通道、中性校准和头部矩阵 | 重新导入、自定义重定向或分析 |
 | GLB | GNM 网格、皮肤材质、语义/下颌形变目标和动画 | Blender、glTF 工具、后期编辑 |
-| MP4 | H.264 视频与最高 320 kbps AAC；直接录制或用 WebCodecs 本地转换 | 分享与剪辑 |
+| MP4 | 从动作渲染的 H.264 视频，或带最高 320 kbps AAC 的直接录制视频 | 分享与剪辑 |
 | WebM 源文件 | WebView2 内部录制 WebM 时可选保存的未转换源文件 | 诊断或归档 |
 
 Blender 可编辑动画推荐使用 GLB。通过 **File → Import → glTF 2.0** 导入。
-`1.0.0` 暂不包含 Alembic 导出。
+`1.0.1` 暂不包含 Alembic 导出。
 默认导出文件名包含精确到秒的本地日期与时间，例如
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`。
 
@@ -316,11 +317,15 @@ third_party/google-gnm/      保留的 Google 上游许可证
 切换到 **Avatar** 视图，提高头像透明度，然后一次调整一个表情。手动滑块在
 没有摄像头时也可工作。锁发光表示该通道已冻结在当前实时值加手动值的位置。
 
-### 无法导出 MP4
+### 无法导出 MP4 或按钮呈灰色
 
 MP4 始终是主要视频导出格式。WebView2 无法直接录制 MP4 时，应用会先录制高质量
 WebM 源文件，再使用 WebCodecs 在本地转换为 H.264/AAC。若系统没有 H.264 编码器，
 请更新 Microsoft Edge WebView2 后重试；仍可导出可选的 WebM 源文件。
+
+只要已有动作录制或直接视频录制，MP4 按钮就会启用。对于 **Motion data**，点击
+MP4 会实时播放一次头像并录制无声视频，因此完成前请保持应用或浏览器标签页可见。
+若需要保留麦克风音频，请在录制前选择 **Avatar video** 或 **Camera + avatar**。
 
 高级用户可在 **Encoder quality** 中选择 **System FFmpeg**。输入 `ffmpeg` 使用
 PATH，或手动选择 `ffmpeg.exe`。Auto 会优先使用检测到的 FFmpeg，否则回退到

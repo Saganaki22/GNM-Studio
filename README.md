@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.0.0-54ddb2" alt="Release v1.0.0"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.0.1-54ddb2" alt="Release v1.0.1"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages web edition"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 and React">
@@ -22,7 +22,7 @@
 
 Author: [Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.0.0` combines Google GNM Head v3, MediaPipe Face Landmarker,
+GNM Studio `1.0.1` combines Google GNM Head v3, MediaPipe Face Landmarker,
 Three.js, Rust, and Tauri in a portable Windows application, with a companion
 GitHub Pages edition for trying the tracking and animation workflow online. It
 can drive a head from a webcam, record facial motion and video, and export
@@ -34,7 +34,7 @@ downloads. The desktop edition also provides native seeded identity generation.
 1. Download the latest Windows x64 archive from
    [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases).
 2. Extract it to a writable folder such as `C:\AI\GNM-Studio\`.
-3. Run `GNM-Studio-v1.0.0.exe`.
+3. Run `GNM-Studio-v1.0.1.exe`.
 4. Approve camera and/or microphone access if you want live capture, or choose
    **Continue without capture** for manual avatar work.
 5. For tracked performances, hold a neutral expression and use **Calibrate neutral**.
@@ -153,7 +153,8 @@ installation, Microsoft WebView2 may need to be installed separately.
 ## Recording and Export
 
 **Capture mode** controls what the Record button stores; it does not change the
-live viewport. **Motion data** records editable tracking channels for JSON/GLB,
+live viewport. **Motion data** records editable tracking channels for JSON/GLB
+and can now be rendered locally into a silent avatar MP4 after recording.
 **Avatar video** records only the rendered head/background, and **Camera +
 avatar** records the enabled layers as one composited video. Microphone audio is
 included in video modes unless muted.
@@ -162,11 +163,11 @@ included in video modes unless muted.
 | --- | --- | --- |
 | JSON | Timestamped MediaPipe channels, neutral calibration, and head matrix | Re-import, custom retargeting, or analysis |
 | GLB | GNM mesh, skin material, semantic/jaw morph targets, and animation | Blender, glTF tools, editing |
-| MP4 | H.264 video and up to 320 kbps AAC, direct or converted locally with WebCodecs | Sharing and editing |
+| MP4 | H.264 video rendered from motion, or direct video with up to 320 kbps AAC | Sharing and editing |
 | WebM source | Optional unconverted source when WebView2 recorded WebM internally | Diagnostics or archival |
 
 For Blender, animated GLB is the recommended editable export. Import it with
-**File → Import → glTF 2.0**. Alembic export is not part of `1.0.0`.
+**File → Import → glTF 2.0**. Alembic export is not part of `1.0.1`.
 Export defaults include local date and time down to seconds, for example
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`.
 
@@ -349,12 +350,18 @@ Switch to **Avatar** view, increase avatar opacity, and move one expression at a
 time. Manual controls work without a webcam. A glowing lock means that channel
 is frozen at its current live-plus-manual value.
 
-### MP4 is unavailable
+### MP4 is unavailable or greyed out
 
 GNM Studio always presents MP4 as the primary video export. When WebView2 cannot
 record MP4 directly, the app records a high-quality WebM source and locally
 transcodes it to H.264/AAC with WebCodecs. If H.264 itself is unavailable, update
 Microsoft Edge WebView2 and retry; the optional WebM source remains exportable.
+
+The MP4 button activates after either a motion take or a direct video take exists.
+For **Motion data**, clicking MP4 plays the avatar once in real time and captures a
+silent video, so keep the app or browser tab visible until rendering completes.
+Choose **Avatar video** or **Camera + avatar** before recording when microphone
+audio must be preserved.
 
 Power users may select **System FFmpeg** under **Encoder quality**. Enter `ffmpeg`
 to use PATH or choose `ffmpeg.exe`. Auto uses a detected FFmpeg installation and
