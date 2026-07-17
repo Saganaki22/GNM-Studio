@@ -18,6 +18,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="Apache 2.0"></a>
 </p>
 
+
+
+https://github.com/user-attachments/assets/e1449cad-ea74-4912-b77a-a0effe41c102
+
+
+
 [中文说明](README_ZH.md) · [Try the Web Edition](https://drbaph.is-a.dev/GNM-Studio/) · [Releases](https://github.com/Saganaki22/GNM-Studio/releases) · [Google GNM](https://github.com/google/GNM)
 
 Author: [Saganaki22](https://github.com/Saganaki22)
@@ -43,8 +49,8 @@ Two portable archives may be published:
 
 | Package | Use it when |
 | --- | --- |
-| Standard portable ZIP | Recommended. Best compatibility with antivirus and code signing. |
-| Portable UPX ZIP | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
+| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.0/GNM-Studio-1.1.0-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
+| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.0/GNM-Studio-1.1.0-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
 
 The application and all model assets are embedded. No installer is required.
 
