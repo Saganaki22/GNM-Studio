@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.1-54ddb2" alt="版本 v1.2.1"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.2-54ddb2" alt="版本 v1.2.2"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages 网页版"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 与 React">
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/874bc735-c11d-4ae6-9cdc-2db1082d2a5b
 
 作者：[Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.2.1` 将 Google GNM Head v3、MIT FaceCap 52 头像、MediaPipe Face Landmarker、
+GNM Studio `1.2.2` 将 Google GNM Head v3、MIT FaceCap 52 头像、MediaPipe Face Landmarker、
 Three.js、Rust 与 Tauri 整合到便携式 Windows 应用，并提供用于在线体验跟踪与
 动画流程的 GitHub Pages 版本。它可通过摄像头驱动头像、录制面部动作和视频，
 并把动画导出到 Blender。普通用户无需安装 Python、Node.js、Rust 或 CUDA；
@@ -40,7 +40,7 @@ Worker 中计算紧凑的量化基底，从而避免阻塞界面。
 1. 从 [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases)
    下载最新的 Windows x64 压缩包。
 2. 解压到可写目录，例如 `C:\AI\GNM-Studio\`。
-3. 运行 `GNM-Studio-v1.2.1.exe`。
+3. 运行 `GNM-Studio-v1.2.2.exe`。
 4. 如需实时捕捉，请允许摄像头和/或麦克风权限；手动编辑可选择
    **Continue without capture**。
 5. 跟踪录制前保持放松的中性表情，并点击 **Calibrate neutral**。
@@ -179,7 +179,7 @@ Windows 版在运行时**不会下载模型**。发布版 EXE 已包含：
 | WebM 源文件 | WebView2 内部录制 WebM 时可选保存的未转换源文件 | 诊断或归档 |
 
 Blender 可编辑动画推荐使用 GLB。通过 **File → Import → glTF 2.0** 导入。
-`1.2.1` 暂不包含 Alembic 导出。
+`1.2.2` 暂不包含 Alembic 导出。
 默认导出文件名包含精确到秒的本地日期与时间，例如
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`。
 

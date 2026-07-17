@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.1-54ddb2" alt="Release v1.2.1"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.2-54ddb2" alt="Release v1.2.2"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages web edition"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 and React">
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/e1449cad-ea74-4912-b77a-a0effe41c102
 
 Author: [Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.2.1` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
+GNM Studio `1.2.2` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
 Three.js, Rust, and Tauri in a portable Windows application, with a companion
 GitHub Pages edition for trying the tracking and animation workflow online. It
 can drive a head from a webcam, record facial motion and video, and export
@@ -42,7 +42,7 @@ quantized basis in a dedicated worker so the interface stays responsive.
 1. Download the latest Windows x64 archive from
    [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases).
 2. Extract it to a writable folder such as `C:\AI\GNM-Studio\`.
-3. Run `GNM-Studio-v1.2.1.exe`.
+3. Run `GNM-Studio-v1.2.2.exe`.
 4. Approve camera and/or microphone access if you want live capture, or choose
    **Continue without capture** for manual avatar work.
 5. For tracked performances, hold a neutral expression and use **Calibrate neutral**.
@@ -51,8 +51,8 @@ Two portable archives may be published:
 
 | Package | Use it when |
 | --- | --- |
-| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.1/GNM-Studio-1.2.1-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
-| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.1/GNM-Studio-1.2.1-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
+| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.2/GNM-Studio-1.2.2-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
+| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.2/GNM-Studio-1.2.2-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
 
 The application and all model assets are embedded. No installer is required.
 
@@ -212,7 +212,7 @@ unless muted, and the completed source is reused without re-recording.
 | WebM source | Optional unconverted source when WebView2 recorded WebM internally | Diagnostics or archival |
 
 For Blender, animated GLB is the recommended editable export. Import it with
-**File → Import → glTF 2.0**. Alembic export is not part of `1.2.1`.
+**File → Import → glTF 2.0**. Alembic export is not part of `1.2.2`.
 Export defaults include local date and time down to seconds, for example
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`.
 

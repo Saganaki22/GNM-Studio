@@ -146,6 +146,14 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] Add deterministic recording-pipeline checks for head motion, immutable view framing, finalization, and microphone routing.
 - [x] Correct the slight GNM cross-eyed neutral look with per-eye outward optical centres and a small gaze dead zone.
 
+## Version 1.2.2 pitch hotfix
+
+- [x] Reproduce calibrated up/down suppression when MediaPipe matrix pitch remains near zero.
+- [x] Prefer clear smoothed landmark pitch when calibrated matrix pitch is weak or contradictory.
+- [x] Preserve matrix pitch when it remains responsive, plus existing yaw, roll, mirror, smoothing, XYZ, and recording behavior.
+- [x] User-test the portable build before commit, tag, push, and release.
+- [x] Rebuild and launch-smoke both standard and UPX portable packages after documentation freeze.
+
 ## Remaining production work
 
 - [ ] Fit a high-quality 52-to-383 MediaPipe/GNM retargeting matrix from matched landmarks.

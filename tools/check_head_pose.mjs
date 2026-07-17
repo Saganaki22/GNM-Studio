@@ -38,6 +38,36 @@ const mirroredPitch = new THREE.Euler().setFromQuaternion(resolveHeadPose(looked
 assert.ok(pitch.x > THREE.MathUtils.degToRad(5), "looking down must produce positive pitch");
 assert.ok(Math.abs(mirroredPitch.x - pitch.x) < 1e-6, "mirroring must not reverse pitch");
 
+const identityMatrix = new THREE.Matrix4().identity().toArray();
+const calibratedMatrixSilentPitch = new THREE.Euler().setFromQuaternion(resolveHeadPose(
+  frame({ 1: { y: 0.58 } }, identityMatrix),
+  frame({}, identityMatrix),
+  false,
+  settings,
+));
+assert.ok(
+  calibratedMatrixSilentPitch.x > THREE.MathUtils.degToRad(5),
+  "a near-zero calibrated matrix must not suppress clear landmark pitch",
+);
+const calibratedMatrixSilentLookUp = new THREE.Euler().setFromQuaternion(resolveHeadPose(
+  frame({ 1: { y: 0.44 } }, identityMatrix),
+  frame({}, identityMatrix),
+  true,
+  settings,
+));
+assert.ok(
+  calibratedMatrixSilentLookUp.x < -THREE.MathUtils.degToRad(5),
+  "a near-zero calibrated matrix must preserve looking up in mirror mode",
+);
+const contradictoryPitchMatrix = new THREE.Matrix4().makeRotationX(-0.18).toArray();
+const calibratedContradictoryPitch = new THREE.Euler().setFromQuaternion(resolveHeadPose(
+  frame({ 1: { y: 0.58 } }, contradictoryPitchMatrix),
+  frame({}, identityMatrix),
+  false,
+  settings,
+));
+assert.ok(calibratedContradictoryPitch.x > 0, "a contradictory matrix axis must not invert deliberate pitch");
+
 const rolled = frame({ 33: { y: 0.48 }, 263: { y: 0.40 } });
 const roll = new THREE.Euler().setFromQuaternion(resolveHeadPose(rolled, neutral, false, settings));
 assert.ok(roll.z > THREE.MathUtils.degToRad(5), "image-space counter-clockwise tilt must produce positive Three.js roll");
@@ -46,7 +76,6 @@ const mirroredRoll = new THREE.Euler().setFromQuaternion(resolveHeadPose(rolled,
 assert.ok(mirroredRoll.z < -THREE.MathUtils.degToRad(5), "mirroring must reverse roll exactly once");
 assert.ok(Math.abs(Math.abs(mirroredRoll.z) - Math.abs(roll.z)) < 1e-6, "mirroring must preserve roll magnitude");
 
-const identityMatrix = new THREE.Matrix4().identity().toArray();
 const contradictoryMatrix = new THREE.Matrix4().makeRotationZ(-0.35).toArray();
 const calibratedRoll = new THREE.Euler().setFromQuaternion(resolveHeadPose(
   frame({ 33: { y: 0.48 }, 263: { y: 0.40 } }, contradictoryMatrix),

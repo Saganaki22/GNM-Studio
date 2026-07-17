@@ -83,8 +83,21 @@ export function resolveHeadPose(
         ? fallbackValue
         : matrixValue;
     };
+    const responsivePitch = (matrixValue: number, fallbackValue: number) => {
+      if (!Number.isFinite(matrixValue)) return fallbackValue;
+      const fallbackActive = Math.abs(fallbackValue) > THREE.MathUtils.degToRad(2);
+      if (!fallbackActive) return matrixValue;
+      const oppositeDirection = Math.abs(matrixValue) > THREE.MathUtils.degToRad(1)
+        && Math.sign(matrixValue) !== Math.sign(fallbackValue);
+      const matrixUnderResponding = Math.abs(matrixValue) < Math.abs(fallbackValue) * 0.9;
+      // Some MediaPipe delegates keep calibrated matrix pitch close to zero or
+      // expose it on a different basis axis. The smoothed nose/forehead/chin
+      // landmarks still carry a clear up/down signal, so never let a weak or
+      // contradictory matrix value suppress deliberate pitch.
+      return oppositeDirection || matrixUnderResponding ? fallbackValue : matrixValue;
+    };
     sourceEuler = new THREE.Euler(
-      safeAxis(sourceEuler.x, fallbackEuler.x),
+      responsivePitch(sourceEuler.x, fallbackEuler.x),
       safeAxis(sourceEuler.y, fallbackEuler.y),
       // Eye-line roll is stable and already in display coordinates. Matrix
       // roll conventions vary between MediaPipe delegates and could otherwise
