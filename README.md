@@ -18,6 +18,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="Apache 2.0"></a>
 </p>
 
+
+
+https://github.com/user-attachments/assets/e1449cad-ea74-4912-b77a-a0effe41c102
+
+
+
 [中文说明](README_ZH.md) · [Try the Web Edition](https://drbaph.is-a.dev/GNM-Studio/) · [Releases](https://github.com/Saganaki22/GNM-Studio/releases) · [Google GNM](https://github.com/google/GNM)
 
 Author: [Saganaki22](https://github.com/Saganaki22)
