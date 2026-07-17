@@ -9,6 +9,7 @@ export const skinToneOptions: ReadonlyArray<{
   baseColor: number;
   map: string;
 }> = [
+  { id: "neutral", label: "Neutral", swatch: "#ffffff", baseColor: 0xffffff, map: "textures/skin/skin-tone-light.jpg" },
   { id: "light", label: "Light", swatch: "#e7b997", baseColor: 0xe7b997, map: "textures/skin/skin-tone-light.jpg" },
   { id: "warm", label: "Warm", swatch: "#c9825f", baseColor: 0xc9825f, map: "textures/skin/skin-tone-warm.jpg" },
   { id: "medium", label: "Medium", swatch: "#9d6045", baseColor: 0x9d6045, map: "textures/skin/skin-tone-medium.jpg" },
@@ -99,6 +100,32 @@ function canvasTexture(image: HTMLImageElement, feather: number, color = false) 
   return texture;
 }
 
+function neutralColorTexture(image: HTMLImageElement, feather: number) {
+  const canvas = featheredCanvas(image, feather);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("The browser could not neutralize the skin colour texture.");
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  let luminanceTotal = 0;
+  for (let offset = 0; offset < pixels.data.length; offset += 4) {
+    luminanceTotal += pixels.data[offset] * 0.2126 + pixels.data[offset + 1] * 0.7152 + pixels.data[offset + 2] * 0.0722;
+  }
+  const average = luminanceTotal / Math.max(1, pixels.data.length / 4);
+  for (let offset = 0; offset < pixels.data.length; offset += 4) {
+    const luminance = pixels.data[offset] * 0.2126 + pixels.data[offset + 1] * 0.7152 + pixels.data[offset + 2] * 0.0722;
+    const neutral = Math.min(255, Math.max(0, Math.round(238 + (luminance - average) * 0.42)));
+    pixels.data[offset] = neutral;
+    pixels.data[offset + 1] = neutral;
+    pixels.data[offset + 2] = neutral;
+  }
+  context.putImageData(pixels, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.center.set(0.5, 0.5);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 export async function loadSkinTextureSet(tone: SkinTone, feather: number) {
   const toneOption = skinToneOptions.find((option) => option.id === tone) ?? skinToneOptions[0];
   const [color, normal, displacement, occlusion, specular] = await Promise.all([
@@ -109,7 +136,7 @@ export async function loadSkinTextureSet(tone: SkinTone, feather: number) {
     loadImage(assetUrl("textures/skin/skin-specular.jpg")),
   ]);
   return {
-    color: canvasTexture(color, feather, true),
+    color: tone === "neutral" ? neutralColorTexture(color, feather) : canvasTexture(color, feather, true),
     normal: canvasTexture(normal, feather),
     displacement: canvasTexture(displacement, feather),
     occlusion: canvasTexture(occlusion, feather),

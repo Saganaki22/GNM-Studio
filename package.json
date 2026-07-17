@@ -1,7 +1,7 @@
 {
   "name": "gnm-studio",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,9 +9,10 @@
     "build": "tsc -b && vite build",
     "build:web": "tsc -b && vite build --mode web",
     "check:web": "node tools/check_pages_build.mjs",
+    "check:assets": "node tools/check_facecap_asset.mjs",
     "tauri": "tauri",
-    "check": "npm run build && cargo check --manifest-path src-tauri/Cargo.toml",
-    "test": "npm run build && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check": "npm run check:assets && npm run build && cargo check --manifest-path src-tauri/Cargo.toml",
+    "test": "npm run check:assets && npm run build && cargo test --manifest-path src-tauri/Cargo.toml",
     "build:gnm": "python tools/build_gnm_runtime.py",
     "lint": "oxlint",
     "preview": "vite preview"

@@ -10,6 +10,7 @@ const required = [
   "site.webmanifest",
   "favicon.svg",
   "models/gnm_head_runtime.glb",
+  "models/facecap.glb",
   "models/face_landmarker.task",
   "wasm/vision_wasm_internal.wasm",
 ];

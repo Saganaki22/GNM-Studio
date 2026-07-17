@@ -37,7 +37,7 @@
 - [x] Add a dedicated lower-jaw morph driven by MediaPipe jaw/lip separation for visible wide-mouth opening.
 - [x] Preserve zoom and pan when snapping cardinal views; reserve full reframing for Reset view.
 - [x] Remove the redundant aggregate capture dot while preserving per-camera, per-microphone, and tracker status.
-- [x] Add an experimental five-tone repeated PBR skin material with scale, rotation, and seam-feather controls.
+- [x] Add an experimental neutral/no-tint plus five-tone repeated PBR skin material with scale, rotation, and seam-feather controls.
 - [x] Make experimental skin collapsed/off by default and prevent tone/feather updates from darkening the live material.
 - [x] Restore GPU-first MediaPipe tracking with explicit CPU fallback diagnostics.
 - [x] Match landmarks and avatar placement to the webcam's object-fit cover crop.
@@ -69,6 +69,34 @@
 - [x] Add a `/GNM-Studio/` GitHub Pages web build, static-path verification, CI, and `webapp-src` deployment workflow.
 - [x] Let recorded motion render to MP4 in the web/desktop UI instead of leaving video export disabled.
 - [x] Migrate existing preferences once so experimental skin microtexture starts disabled while remaining user-toggleable.
+
+## Version 1.1.0 roadmap
+
+Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
+
+- [x] Confirm the FaceCap model's MIT redistribution status and upstream attribution.
+- [x] Preserve the Face Cap credit, Three.js source, pinned revision, and MIT notice in release documentation.
+- [x] Vendor and validate the Three.js/Face Cap `facecap.glb` as an offline local asset.
+- [x] Add a persistent GNM Head v3 / FaceCap 52 avatar selector.
+- [x] Refactor Stage around typed model profiles instead of GNM-specific node names.
+- [x] Map all 52 MediaPipe channels directly to FaceCap morph targets.
+- [x] Add grouped FaceCap manual controls and per-channel freeze locks.
+- [x] Add a shared face-only head-pose controller with matrix primary and landmark fallback.
+- [x] Add head rotation toggle plus yaw/pitch/roll strength, dead-zone, and smoothing controls.
+- [x] Apply the current PBR skin system to FaceCap's skin mesh only.
+- [x] Build a material split that excludes eyes, teeth, and tongue from the skin PBR material.
+- [x] Extend motion JSON metadata while preserving v1 backward compatibility.
+- [x] Generalize animated GLB export for GNM semantic and FaceCap 52-target profiles.
+- [ ] Verify MP4/WebM recording and motion-to-video rendering with either avatar.
+- [x] Add true fullscreen clean-output mode with configurable control auto-hide and `H` toggle.
+- [x] Add a single-renderer desktop/web popout with heartbeat and automatic main-canvas restoration.
+- [x] Show an actionable **Output is in the popout** placeholder in the main viewport.
+- [x] Route recording commands to whichever window currently owns the output canvas.
+- [ ] Add regression/performance tests proving one tracker and one renderer remain active.
+- [ ] Validate both exported avatars in Blender, including pose, jaw, tongue, timing, and PBR materials.
+- [x] Update permissions, third-party notices, English/Chinese READMEs, CI, Pages, and portable packaging.
+- [x] Bump all manifests and portable packaging defaults to 1.1.0 at feature freeze.
+- [ ] Build, tag, and publish the v1.1.0 release after validation.
 
 ## Remaining production work
 

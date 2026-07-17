@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.0.1-54ddb2" alt="Release v1.0.1"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.1.0-54ddb2" alt="Release v1.1.0"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages web edition"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 and React">
@@ -22,7 +22,7 @@
 
 Author: [Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.0.1` combines Google GNM Head v3, MediaPipe Face Landmarker,
+GNM Studio `1.1.0` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
 Three.js, Rust, and Tauri in a portable Windows application, with a companion
 GitHub Pages edition for trying the tracking and animation workflow online. It
 can drive a head from a webcam, record facial motion and video, and export
@@ -34,7 +34,7 @@ downloads. The desktop edition also provides native seeded identity generation.
 1. Download the latest Windows x64 archive from
    [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases).
 2. Extract it to a writable folder such as `C:\AI\GNM-Studio\`.
-3. Run `GNM-Studio-v1.0.1.exe`.
+3. Run `GNM-Studio-v1.1.0.exe`.
 4. Approve camera and/or microphone access if you want live capture, or choose
    **Continue without capture** for manual avatar work.
 5. For tracked performances, hold a neutral expression and use **Calibrate neutral**.
@@ -55,7 +55,7 @@ current Chromium-based browser. Camera and microphone capture require HTTPS,
 which GitHub Pages provides. Processing remains in the browser; frames and
 audio are not uploaded to an application server.
 
-The web edition includes the base GNM head, MediaPipe GPU/CPU tracking,
+The web edition includes the base GNM head and FaceCap 52 avatar, MediaPipe GPU/CPU tracking,
 calibration, overlays, landmarks, smoothing, expressions and locks, PBR skin,
 backgrounds, motion/video recording, playback, JSON import/export, animated GLB
 export, and browser-based MP4/WebM saving. Browser codec support determines MP4
@@ -70,6 +70,10 @@ lives at its `GNM-Studio` subpath.
 ## Features
 
 - Native Google GNM Head v3 mesh with 17,821 vertices and 35,324 triangles.
+- Offline MIT FaceCap avatar with all 52 MediaPipe/ARKit-style morph targets,
+  including direct jaw, gaze, cheek, lip, and tongue controls.
+- Persistent avatar switching: GNM keeps its semantic/native identity workflow,
+  while FaceCap exposes grouped 52-channel sliders and independent freeze locks.
 - Seeded identity creation with presentation and population blending controls.
 - MediaPipe webcam tracking with 478 face landmarks, 52 tracking blendshapes,
   a facial transformation matrix, GPU-first execution, and CPU fallback.
@@ -81,6 +85,9 @@ lives at its `GNM-Studio` subpath.
 - Separate adaptive 0–100% facial and head-motion smoothing with deadbands and
   one-frame transient rejection. Tiny isolated twitches are discarded while
   sustained deliberate motion opens the filter quickly.
+- Face-only head orientation using MediaPipe's facial matrix with a landmark
+  fallback, neutral-relative yaw/pitch/roll strengths, dead zone, and smoothing;
+  no torso or shoulder tracker is used.
 - Twenty GNM semantic expression sliders with independent illuminated freeze locks,
   plus a stronger derived lower-jaw morph for decisive wide-mouth opening.
 - Webcam-only, avatar-only, or transparent avatar-over-webcam viewing modes.
@@ -88,8 +95,11 @@ lives at its `GNM-Studio` subpath.
   wireframe, and avatar opacity controls.
 - Blender-style orbit, pan, wheel zoom, cardinal views that preserve framing,
   and a separate full reset view.
+- True fullscreen canvas output with configurable control auto-hide and `H`,
+  plus a canvas-only OBS popout that becomes the sole renderer and restores the
+  studio canvas automatically when it closes.
 - Experimental repeated PBR skin material, off and collapsed by default, with
-  five base tones, aligned colour/normal/displacement/occlusion/specular maps,
+  a no-tint white neutral option plus five base tones, aligned colour/normal/displacement/occlusion/specular maps,
   scale/rotation controls, adjustable seam feathering, and flicker-free live updates.
 - Mouse-following point light with `L` to freeze/rebind, plus enable and power controls.
 - Studio gradient, solid colour, transparent, and locally stored custom image
@@ -114,7 +124,8 @@ are bundled into the release executable:
 - MediaPipe WASM loaders and binaries.
 - Google GNM Head v3 NPZ data.
 - Runtime GNM GLB and semantic identity/expression decoders.
-- Five local experimental skin colour variants and their shared PBR detail maps.
+- The pinned Three.js r184 FaceCap 52 GLB avatar.
+- A procedural neutral/no-tint skin map, five local skin-tone variants, and their shared PBR detail maps.
 - Local WebCodecs MP4 muxing and AAC fallback encoder code.
 - The complete Tauri/Vite frontend.
 
@@ -145,10 +156,12 @@ installation, Microsoft WebView2 may need to be installed separately.
 | Shift + left drag | Pan |
 | Mouse wheel | Zoom |
 | `L` | Freeze or rebind the pointer light |
+| `H` in fullscreen | Hide or reveal all canvas controls |
 | Right-click Devices/backend | Choose Auto, GPU, or CPU tracking |
 | Cardinal gizmo | Snap direction while preserving the current zoom and pan target |
 | Reset button | Restore the default camera view |
-| View-focus button | Hide the studio panels and focus the canvas; `Esc` exits |
+| Fullscreen button | Open clean canvas fullscreen; move to reveal controls and `Esc` exits |
+| Popout button | Move the sole renderer to a canvas-only OBS/output window |
 
 ## Recording and Export
 
@@ -161,13 +174,13 @@ included in video modes unless muted.
 
 | Format | Contents | Typical use |
 | --- | --- | --- |
-| JSON | Timestamped MediaPipe channels, neutral calibration, and head matrix | Re-import, custom retargeting, or analysis |
-| GLB | GNM mesh, skin material, semantic/jaw morph targets, and animation | Blender, glTF tools, editing |
+| JSON | Timestamped MediaPipe channels, selected avatar profile, manual/frozen controls, neutral calibration, and head matrix | Re-import, custom retargeting, or analysis |
+| GLB | Selected GNM or FaceCap mesh, skin material, morph targets, face-only head pose, and animation | Blender, glTF tools, editing |
 | MP4 | H.264 video rendered from motion, or direct video with up to 320 kbps AAC | Sharing and editing |
 | WebM source | Optional unconverted source when WebView2 recorded WebM internally | Diagnostics or archival |
 
 For Blender, animated GLB is the recommended editable export. Import it with
-**File → Import → glTF 2.0**. Alembic export is not part of `1.0.1`.
+**File → Import → glTF 2.0**. Alembic export is not part of `1.1.0`.
 Export defaults include local date and time down to seconds, for example
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`.
 
@@ -185,11 +198,17 @@ correctives, forward kinematics, and linear-blend skinning path directly from
 the bundled NPZ model. Automated tests compare neutral and posed output against
 the original Python implementation.
 
-The live viewport uses 20 semantic GNM morph targets derived from the upstream
+The live GNM viewport uses 20 semantic morph targets derived from the upstream
 semantic decoder. Because GNM does not expose an ARKit-style jaw bone, GNM
 Studio adds a smoothly masked lower-jaw rotation morph and drives it from
 MediaPipe `jawOpen` plus lip-separation channels. The raw 52 channels remain
 available in JSON recordings for future or custom retargeting.
+
+FaceCap is a separate fixed-identity mocap profile. Its 52 named morph targets
+are driven directly from MediaPipe's corresponding channels, so jaw opening and
+tongue output do not pass through GNM's semantic reduction. Skin PBR is applied
+only to the morphable head surface; the separate eyes and teeth keep dedicated
+materials, and tongue triangles use their own runtime material group.
 
 </details>
 
@@ -380,8 +399,9 @@ can trigger heuristic scanners even when the unpacked program is identical.
 Webcam / microphone
   → MediaPipe Face Landmarker worker
     → 478 landmarks + 52 blendshapes + head transform
-      → semantic GNM retargeting
-        → Three.js live viewport and recorder
+      → selected retarget profile
+        → 20 GNM semantic controls or 52 direct FaceCap morphs
+          → one Three.js output renderer and recorder
 
 Tauri React UI
   → Rust commands
@@ -395,6 +415,9 @@ GNM Studio builds on:
 
 - [Google GNM](https://github.com/google/GNM) for GNM Head v3 and semantic decoders.
 - [Google AI Edge MediaPipe](https://github.com/google-ai-edge/mediapipe) for local face tracking.
+- [Face Cap](https://www.bannaflak.com/face-cap/) and the pinned
+  [Three.js r184 FaceCap model](https://github.com/mrdoob/three.js/blob/r184/examples/models/gltf/facecap.glb)
+  for the MIT-licensed 52-target mocap avatar.
 - [Mediabunny](https://github.com/Vanilagy/mediabunny) for portable WebCodecs media conversion and AAC fallback.
 - [FFmpeg](https://ffmpeg.org/) for the optional user-installed system encoder and AAC encoder foundation.
 - [Phosphor Icons](https://github.com/phosphor-icons/core) and [Lucide](https://github.com/lucide-icons/lucide) for interface icons.

@@ -84,6 +84,8 @@
 .hero-card > div:nth-child(2) { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .hero-card span, .hero-card small { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 .hero-card strong { margin: 3px 0; font-size: 12px; }
+.model-picker select { width: 100%; min-width: 0; margin: 2px 0 4px; padding: 0 23px 0 0; border: 0; outline: 0; appearance: none; background: transparent; color: var(--text); font-size: 12px; font-weight: 700; cursor: pointer; }
+.model-picker > svg { pointer-events: none; color: var(--muted); }
 .avatar-orb { width: 40px; height: 40px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #74869a, #222b37 55%, #10151c); color: #d8e2ef; box-shadow: 0 7px 20px rgba(0,0,0,.35); }
 
 .section-heading { display: flex; align-items: center; min-height: 22px; margin-bottom: 12px; }
@@ -125,6 +127,8 @@ select option { background: var(--surface-2); color: var(--text); }
 .advanced-expression { margin-top: 7px; border-top: 1px solid var(--line); padding-top: 6px; }
 .advanced-expression summary { list-style: none; display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--muted-2); font-size: 9px; padding: 7px 0; }
 .advanced-expression summary::-webkit-details-marker { display: none; }
+.advanced-expression summary small { margin-left: auto; color: var(--muted); font: 700 8px "DM Mono", monospace; }
+.facecap-expression-group { margin-top: 2px; }
 
 .secondary-button, .primary-button, .control-button, .record-button, .stop-button {
   height: 34px; border-radius: 8px; padding: 0 12px; display: inline-flex; align-items: center;
@@ -156,6 +160,20 @@ select option { background: var(--surface-2); color: var(--text); }
 .view-mode-switch button.active { color: var(--accent); background: rgb(var(--accent-rgb) / .12); box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / .25); }
 .view-mode-switch button.active::before { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .toolbar-actions { margin-left: auto; display: flex; gap: 6px; }
+.tracking-video-hidden { position: fixed; width: 2px; height: 2px; left: -10px; top: -10px; opacity: 0; pointer-events: none; }
+.popout-placeholder { min-height: 0; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 30px; color: var(--muted-2); text-align: center; background: radial-gradient(circle at 50% 42%, rgb(var(--accent-rgb) / .1), transparent 45%), #05070a; }
+.popout-placeholder > svg { color: var(--accent); filter: drop-shadow(0 0 15px rgb(var(--accent-rgb) / .42)); }
+.popout-placeholder strong { color: var(--text); font-size: 15px; }
+.popout-placeholder span { max-width: 470px; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.popout-placeholder > div { display: flex; gap: 8px; margin-top: 4px; }
+.output-window { width: 100vw; height: 100dvh; overflow: hidden; background: #05070a; }
+.output-window .stage { width: 100%; height: 100%; }
+.output-window .stage-topline,
+.output-window .view-help,
+.output-window .mouse-light-toggle,
+.output-window .view-gizmo { display: none; }
+.output-loading, .output-error { position: fixed; z-index: 50; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 11px 14px; border: 1px solid var(--line-strong); border-radius: 9px; background: rgba(8,12,17,.88); color: var(--muted-2); font-size: 10px; backdrop-filter: blur(12px); }
+.output-error { top: auto; bottom: 15px; transform: translateX(-50%); color: #ffd0d3; border-color: rgba(255,94,102,.35); }
 
 .icon-button { width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px; color: var(--muted-2); display: inline-grid; place-items: center; cursor: pointer; }
 .icon-button:hover, .icon-button.active { border-color: rgb(var(--accent-rgb) / .3); color: var(--text); background: var(--surface-3); }
@@ -494,6 +512,22 @@ select option { background: var(--surface-2); color: var(--text); }
 .app-shell.viewport-focus > .left-sidebar,
 .app-shell.viewport-focus > .right-sidebar,
 .app-shell.viewport-focus > .transport-dock { display: none; }
+.app-shell.viewport-focus .viewport-toolbar,
+.app-shell.viewport-focus .stage-topline,
+.app-shell.viewport-focus .view-help,
+.app-shell.viewport-focus .mouse-light-toggle,
+.app-shell.viewport-focus .view-gizmo { transition: opacity .2s ease, transform .2s ease; }
+.app-shell.viewport-focus.output-controls-hidden { cursor: none; }
+.app-shell.viewport-focus.output-controls-hidden .viewport-toolbar {
+  height: 0; padding: 0; border: 0; opacity: 0; overflow: hidden; pointer-events: none;
+}
+.app-shell.viewport-focus.output-controls-hidden .stage-topline,
+.app-shell.viewport-focus.output-controls-hidden .view-help,
+.app-shell.viewport-focus.output-controls-hidden .mouse-light-toggle,
+.app-shell.viewport-focus.output-controls-hidden .view-gizmo {
+  opacity: 0; pointer-events: none;
+}
+.app-shell.viewport-focus.output-controls-hidden .avatar-canvas { cursor: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }

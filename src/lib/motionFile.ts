@@ -1,7 +1,10 @@
-import type { RecordedFrame, TrackingFrame } from "../types";
+import type { AvatarKind, RecordedFrame, TrackingFrame } from "../types";
 
 export type MotionFile = {
   fps: number;
+  avatarKind?: AvatarKind;
+  manualExpressions: Record<string, number>;
+  frozenExpressions: Record<string, number>;
   neutral: TrackingFrame | null;
   frames: RecordedFrame[];
 };
@@ -60,6 +63,20 @@ function neutralFrame(value: unknown): TrackingFrame | null {
   };
 }
 
+function expressionRecord(value: unknown, field: string) {
+  if (value === undefined) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${field} must be an object.`);
+  }
+  const result: Record<string, number> = {};
+  const entries = Object.entries(value);
+  if (entries.length > 256) throw new Error(`${field} contains too many channels.`);
+  for (const [name, score] of entries) {
+    result[name] = Math.min(1, Math.max(0, finiteNumber(score, `${field}.${name}`)));
+  }
+  return result;
+}
+
 export function parseMotionFile(value: unknown): MotionFile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("The selected file does not contain a GNM Studio motion object.");
@@ -109,6 +126,9 @@ export function parseMotionFile(value: unknown): MotionFile {
 
   return {
     fps: Math.round(fps),
+    avatarKind: payload.avatarKind === "gnm" || payload.avatarKind === "facecap" ? payload.avatarKind : undefined,
+    manualExpressions: expressionRecord(payload.manualExpressions, "manualExpressions"),
+    frozenExpressions: expressionRecord(payload.frozenExpressions, "frozenExpressions"),
     neutral: neutralFrame(payload.neutral),
     frames,
   };

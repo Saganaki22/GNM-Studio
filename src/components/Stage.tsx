@@ -4,39 +4,14 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { assetUrl } from "../lib/assets";
 import { mouthOpenInfluence, semanticInfluences } from "../lib/retarget";
+import { avatarProfiles, facecapInfluences } from "../lib/avatarProfiles";
+import { resolveHeadPose } from "../lib/headPose";
+import { splitFacecapTongueMaterial } from "../lib/facecapModel";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   type SkinTextureSet,
 } from "../lib/skinMaterial";
-import type { BackgroundMode, FaceAlignment, RecordingMode, SkinTone, TrackingFrame } from "../types";
-
-const blendshapeMap: Record<string, string> = {
-  browDownLeft: "browDown_L", browDownRight: "browDown_R",
-  browInnerUp: "browInnerUp", browOuterUpLeft: "browOuterUp_L",
-  browOuterUpRight: "browOuterUp_R", cheekPuff: "cheekPuff",
-  cheekSquintLeft: "cheekSquint_L", cheekSquintRight: "cheekSquint_R",
-  eyeBlinkLeft: "eyeBlink_L", eyeBlinkRight: "eyeBlink_R",
-  eyeLookDownLeft: "eyeLookDown_L", eyeLookDownRight: "eyeLookDown_R",
-  eyeLookInLeft: "eyeLookIn_L", eyeLookInRight: "eyeLookIn_R",
-  eyeLookOutLeft: "eyeLookOut_L", eyeLookOutRight: "eyeLookOut_R",
-  eyeLookUpLeft: "eyeLookUp_L", eyeLookUpRight: "eyeLookUp_R",
-  eyeSquintLeft: "eyeSquint_L", eyeSquintRight: "eyeSquint_R",
-  eyeWideLeft: "eyeWide_L", eyeWideRight: "eyeWide_R",
-  jawForward: "jawForward", jawLeft: "jawLeft", jawOpen: "jawOpen",
-  jawRight: "jawRight", mouthClose: "mouthClose",
-  mouthDimpleLeft: "mouthDimple_L", mouthDimpleRight: "mouthDimple_R",
-  mouthFrownLeft: "mouthFrown_L", mouthFrownRight: "mouthFrown_R",
-  mouthFunnel: "mouthFunnel", mouthLeft: "mouthLeft",
-  mouthLowerDownLeft: "mouthLowerDown_L", mouthLowerDownRight: "mouthLowerDown_R",
-  mouthPressLeft: "mouthPress_L", mouthPressRight: "mouthPress_R",
-  mouthPucker: "mouthPucker", mouthRight: "mouthRight",
-  mouthRollLower: "mouthRollLower", mouthRollUpper: "mouthRollUpper",
-  mouthShrugLower: "mouthShrugLower", mouthShrugUpper: "mouthShrugUpper",
-  mouthSmileLeft: "mouthSmile_L", mouthSmileRight: "mouthSmile_R",
-  mouthStretchLeft: "mouthStretch_L", mouthStretchRight: "mouthStretch_R",
-  mouthUpperUpLeft: "mouthUpperUp_L", mouthUpperUpRight: "mouthUpperUp_R",
-  noseSneerLeft: "noseSneer_L", noseSneerRight: "noseSneer_R",
-};
+import type { AvatarKind, BackgroundMode, FaceAlignment, HeadPoseSettings, RecordingMode, SkinTone, TrackingFrame } from "../types";
 
 function projectCoverPoint(
   video: HTMLVideoElement | null,
@@ -62,6 +37,7 @@ function projectCoverPoint(
 }
 
 type Props = {
+  avatarKind: AvatarKind;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   frame: TrackingFrame | null;
   neutralFrame: TrackingFrame | null;
@@ -82,6 +58,7 @@ type Props = {
   backgroundImageZoom: number;
   mouseLightEnabled: boolean;
   mouseLightIntensity: number;
+  headPoseSettings: HeadPoseSettings;
   calibrating: boolean;
   calibrationComplete: boolean;
   faceAlignment: FaceAlignment;
@@ -99,6 +76,7 @@ type Props = {
 };
 
 export function Stage({
+  avatarKind,
   videoRef,
   frame,
   neutralFrame,
@@ -119,6 +97,7 @@ export function Stage({
   backgroundImageZoom,
   mouseLightEnabled,
   mouseLightIntensity,
+  headPoseSettings,
   calibrating,
   calibrationComplete,
   faceAlignment,
@@ -143,12 +122,14 @@ export function Stage({
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const rootRef = useRef<THREE.Object3D | null>(null);
+  const headPoseRef = useRef(new THREE.Quaternion());
   const controlsRef = useRef<OrbitControls | null>(null);
   const mouseLightRef = useRef<THREE.PointLight | null>(null);
   const opacityRef = useRef(opacity);
   const [mouseLightBound, setMouseLightBound] = useState(true);
   const mouseLightBoundRef = useRef(true);
   const faceRef = useRef<THREE.Mesh | null>(null);
+  const skinMaterialRef = useRef<THREE.MeshPhysicalMaterial | null>(null);
   const skinTexturesRef = useRef<SkinTextureSet | null>(null);
   const skinTransformRef = useRef({ scale: skinTextureScale, rotation: skinTextureRotation });
   const maxAnisotropyRef = useRef(8);
@@ -217,6 +198,13 @@ export function Stage({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    setModelReady(false);
+    faceRef.current = null;
+    skinMaterialRef.current = null;
+    eyeLRef.current = null;
+    eyeRRef.current = null;
+    rootRef.current = null;
+    headPoseRef.current.identity();
 
     const scene = new THREE.Scene();
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 100);
@@ -302,7 +290,9 @@ export function Stage({
 
     const loader = new GLTFLoader();
     const installModel = (gltf: Awaited<ReturnType<GLTFLoader["loadAsync"]>>) => {
-      const model = gltf.scene.children[0] ?? gltf.scene;
+      // FaceCap's head, teeth and eyes are sibling scene nodes. GNM ships
+      // beneath one root node, so preserve its existing hierarchy there.
+      const model = avatarKind === "facecap" ? gltf.scene : gltf.scene.children[0] ?? gltf.scene;
       let face = model.getObjectByName("mesh_2") as THREE.Mesh | undefined;
       model.traverse((object) => {
         if (!face && object instanceof THREE.Mesh && object.morphTargetDictionary) face = object;
@@ -318,8 +308,30 @@ export function Stage({
           opacity: opacityRef.current,
           side: THREE.DoubleSide,
         });
-        face.material = material;
+        skinMaterialRef.current = material;
+        if (avatarKind === "facecap") {
+          const tongueMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0xb45f68,
+            roughness: 0.58,
+            metalness: 0,
+            transparent: true,
+            opacity: opacityRef.current,
+            side: THREE.DoubleSide,
+          });
+          splitFacecapTongueMaterial(face, material, tongueMaterial);
+        } else {
+          face.material = material;
+        }
         faceRef.current = face;
+      }
+      const teeth = model.getObjectByName("mesh_3") ?? model.getObjectByName("teeth");
+      if (teeth instanceof THREE.Mesh) {
+        teeth.material = new THREE.MeshPhysicalMaterial({
+          color: 0xf4eee5,
+          roughness: 0.34,
+          metalness: 0,
+          side: THREE.DoubleSide,
+        });
       }
       eyeLRef.current = model.getObjectByName("eyeLeft") ?? null;
       eyeRRef.current = model.getObjectByName("eyeRight") ?? null;
@@ -336,7 +348,12 @@ export function Stage({
       scene.add(trackingRoot);
       setModelReady(true);
     };
-    loader.load(assetUrl("models/gnm_head_runtime.glb"), installModel);
+    loader.load(
+      assetUrl(avatarProfiles[avatarKind].asset),
+      installModel,
+      undefined,
+      (error) => onSkinMaterialError(`Could not load ${avatarProfiles[avatarKind].label}: ${String(error)}`),
+    );
 
     let animationId = 0;
     const render = () => {
@@ -414,24 +431,39 @@ export function Stage({
       controlsRef.current = null;
       mouseLightRef.current = null;
       renderer.dispose();
+      scene.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach((material) => material.dispose());
+      });
+      faceRef.current = null;
+      skinMaterialRef.current = null;
+      eyeLRef.current = null;
+      eyeRRef.current = null;
+      rootRef.current = null;
       renderer.domElement.remove();
       compositeCanvasRef.current = null;
       onCompositeCanvas(null);
     };
-  }, [onCompositeCanvas, videoRef]);
+  }, [avatarKind, onCompositeCanvas, onSkinMaterialError, videoRef]);
 
   useEffect(() => {
     const face = faceRef.current;
-    if (face && face.material instanceof THREE.MeshPhysicalMaterial) {
-      face.material.opacity = opacity;
-      face.material.wireframe = wireframe;
+    const material = skinMaterialRef.current;
+    if (material) {
+      material.opacity = opacity;
+      material.wireframe = wireframe;
+    }
+    const tongue = Array.isArray(face?.material) ? face.material[1] : null;
+    if (tongue instanceof THREE.MeshPhysicalMaterial) {
+      tongue.opacity = opacity;
+      tongue.wireframe = wireframe;
     }
   }, [opacity, wireframe]);
 
   useEffect(() => {
-    const face = faceRef.current;
-    if (!face || !(face.material instanceof THREE.MeshPhysicalMaterial)) return;
-    const material = face.material;
+    const material = skinMaterialRef.current;
+    if (!material) return;
     if (!skinTextureEnabled) {
       const tone = skinToneColor(skinTone);
       material.color.setHex(tone);
@@ -525,7 +557,7 @@ export function Stage({
 
   useEffect(() => {
     const face = faceRef.current;
-    if (!face || !identityVertices?.length) return;
+    if (avatarKind !== "gnm" || !face || !identityVertices?.length) return;
     const geometry = face.geometry as THREE.BufferGeometry;
     const flattened = new Float32Array(identityVertices.length * 3);
     identityVertices.forEach((vertex, index) => {
@@ -536,7 +568,7 @@ export function Stage({
     geometry.setAttribute("position", new THREE.BufferAttribute(flattened, 3));
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
-  }, [identityVertices, modelReady]);
+  }, [avatarKind, identityVertices, modelReady]);
 
   useEffect(() => {
     if (rendererCanvasRef.current) {
@@ -591,37 +623,15 @@ export function Stage({
       const faceHeight = Math.max(0.1, (maxY - minY) / height);
       root.scale.setScalar(faceHeight * 2.55);
 
-      if (frame.matrix.length === 16) {
-        const matrix = new THREE.Matrix4().fromArray(frame.matrix);
-        const position = new THREE.Vector3();
-        const quaternion = new THREE.Quaternion();
-        const scale = new THREE.Vector3();
-        matrix.decompose(position, quaternion, scale);
-        if (neutralFrame?.matrix.length === 16) {
-          const neutralQuaternion = new THREE.Quaternion();
-          new THREE.Matrix4().fromArray(neutralFrame.matrix).decompose(
-            new THREE.Vector3(),
-            neutralQuaternion,
-            new THREE.Vector3(),
-          );
-          quaternion.premultiply(neutralQuaternion.invert());
-        }
-        const euler = new THREE.Euler().setFromQuaternion(quaternion, "XYZ");
-        // MediaPipe reports the raw camera transform. Mirrored self-view needs
-        // yaw and roll inverted so the head follows the same screen direction.
-        root.rotation.set(euler.x, mirror ? -euler.y : euler.y, mirror ? -euler.z : euler.z);
-      }
+      const pose = resolveHeadPose(frame, neutralFrame, mirror, headPoseSettings, headPoseRef.current);
+      headPoseRef.current.copy(pose);
+      root.quaternion.copy(pose);
     }
 
     const eye = { lH: 0, rH: 0, lV: 0, rV: 0 };
     const blendshapes = frame?.blendshapes ?? [];
     const scoreLookup = Object.fromEntries(blendshapes.map(({ name, score }) => [name, score]));
     for (const { name, score } of blendshapes) {
-      const target = blendshapeMap[name];
-      const index = face.morphTargetDictionary?.[target];
-      if (index !== undefined && face.morphTargetInfluences) {
-        face.morphTargetInfluences[index] = score;
-      }
       if (name === "eyeLookInLeft") eye.lH += score;
       if (name === "eyeLookOutLeft") eye.lH -= score;
       if (name === "eyeLookInRight") eye.rH -= score;
@@ -631,8 +641,10 @@ export function Stage({
       if (name === "eyeLookUpRight") eye.rV -= score;
       if (name === "eyeLookDownRight") eye.rV += score;
     }
-    const semantic = semanticInfluences(scoreLookup);
-    for (const [name, score] of Object.entries(semantic)) {
+    const modelInfluences = avatarKind === "facecap"
+      ? facecapInfluences(scoreLookup)
+      : semanticInfluences(scoreLookup);
+    for (const [name, score] of Object.entries(modelInfluences)) {
       const index = face.morphTargetDictionary?.[name];
       if (index !== undefined && face.morphTargetInfluences) {
         face.morphTargetInfluences[index] = frozenExpressions[name] ?? Math.min(
@@ -641,7 +653,7 @@ export function Stage({
         );
       }
     }
-    const jawOpenIndex = face.morphTargetDictionary?.jaw_open;
+    const jawOpenIndex = avatarKind === "gnm" ? face.morphTargetDictionary?.jaw_open : undefined;
     if (jawOpenIndex !== undefined && face.morphTargetInfluences) {
       face.morphTargetInfluences[jawOpenIndex] = frozenExpressions.surprise ?? Math.min(
         1,
@@ -651,7 +663,7 @@ export function Stage({
     const limit = THREE.MathUtils.degToRad(28);
     if (eyeLRef.current) eyeLRef.current.rotation.set(eye.lV * limit, 0, eye.lH * limit);
     if (eyeRRef.current) eyeRRef.current.rotation.set(eye.rV * limit, 0, eye.rH * limit);
-  }, [frame, frozenExpressions, manualExpressions, mirror, modelReady, neutralFrame, videoRef]);
+  }, [avatarKind, frame, frozenExpressions, headPoseSettings, manualExpressions, mirror, modelReady, neutralFrame, videoRef]);
 
   return (
     <div

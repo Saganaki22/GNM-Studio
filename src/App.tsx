@@ -4,7 +4,7 @@ import { Camera as PhosphorCamera, Microphone as PhosphorMicrophone } from "@pho
 import {
   Aperture, Box, Camera, Check, ChevronDown, CircleStop, Cpu, Download, Eye,
   FlipHorizontal2, Gauge, ImagePlus, Layers3, Lock, Maximize2, Minimize2, Minus, Moon, Pause, Play, Plus,
-  RefreshCw, RotateCcw, Settings2, SlidersHorizontal, Sparkles, Sun, Unlock, Upload, Video,
+  PictureInPicture2, RefreshCw, RotateCcw, Settings2, SlidersHorizontal, Sparkles, Sun, Unlock, Upload, Video,
   WandSparkles, X, Zap,
 } from "lucide-react";
 import { AudioMeter } from "./components/AudioMeter";
@@ -14,13 +14,17 @@ import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
 import { createAnimatedGlb } from "./lib/glbExport";
 import { loadBackgroundImage, removeBackgroundImage, saveBackgroundImage } from "./lib/backgroundStore";
 import { DenseDecoder, identityDecoderInput } from "./lib/decoder";
+import { avatarProfiles, facecapControlGroups, facecapInfluences } from "./lib/avatarProfiles";
+import {
+  outputChannelName, type MainToOutputMessage, type OutputSnapshot, type OutputToMainMessage,
+} from "./lib/outputChannel";
 import { parseMotionFile } from "./lib/motionFile";
 import { semanticExpressionNames, semanticInfluences } from "./lib/retarget";
 import { skinToneOptions } from "./lib/skinMaterial";
 import { AdaptiveTrackingSmoother } from "./lib/trackingSmoothing";
 import { assetUrl } from "./lib/assets";
 import type {
-  AppSettings, DeviceOption, FaceAlignment, RecordedFrame, RecordingMode, TrackingBackend, TrackingFrame,
+  AppSettings, AvatarKind, DeviceOption, FaceAlignment, RecordedFrame, RecordingMode, TrackingBackend, TrackingFrame,
   VideoEncoderBackend,
 } from "./types";
 import "./App.css";
@@ -33,22 +37,24 @@ const brandHeadIconStyle: React.CSSProperties = {
 };
 
 const initialSettings: AppSettings = {
+  avatarKind: "gnm",
   cameraId: "", microphoneId: "", cameraFps: 30, trackingFps: 30, trackingSmoothingEnabled: true, trackingSmoothing: 0.72, motionSmoothingEnabled: true, motionSmoothing: 0.35, trackingBackend: "auto",
   exportFps: 30, videoBitrateMbps: 12, audioBitrateKbps: 192, videoEncoderBackend: isDesktopRuntime ? "auto" : "webcodecs", ffmpegPath: "ffmpeg", showWebcam: true, showAvatar: true, showLandmarks: false,
   mirror: true, muted: false, avatarOpacity: 0.92, wireframe: false,
   skinTextureEnabled: false, skinTone: "light", skinTextureScale: 8, skinTextureRotation: 0, skinTextureFeather: 0.12,
   backgroundMode: "studio", backgroundColor: "#101820", backgroundImageZoom: 1,
   mouseLightEnabled: true, mouseLightIntensity: 1,
+  headRotationEnabled: true, headYawStrength: 1, headPitchStrength: 1, headRollStrength: 1, headRotationDeadZone: 1.5, headRotationSmoothing: 0.35,
+  outputAutoHideEnabled: true, outputAutoHideDelay: 2.5, outputAlwaysHideControls: false,
   recordingMode: "motion",
 };
 
 const repositoryUrl = "https://github.com/Saganaki22/GNM-Studio";
 const releasesUrl = `${repositoryUrl}/releases`;
-const settingsStorageVersion = 2;
+const settingsStorageVersion = 3;
 const accentOptions = ["teal", "blue", "green", "red", "yellow"] as const;
 type AccentOption = (typeof accentOptions)[number];
 type Workspace = "capture" | "create" | "edit" | "export";
-type ExpressionName = (typeof semanticExpressionNames)[number];
 type BackendProbe = { available: boolean | null; reason: string };
 type FfmpegProbe = { available: boolean; version?: string; error?: string };
 
@@ -219,7 +225,7 @@ function FpsInput({
 function ExpressionControl({
   name, value, frozen, onChange, onToggle,
 }: {
-  name: ExpressionName;
+  name: string;
   value: number;
   frozen: boolean;
   onChange: (value: number) => void;
@@ -280,7 +286,7 @@ function App() {
       videoEncoderBackend: isDesktopRuntime ? parsed.videoEncoderBackend ?? initialSettings.videoEncoderBackend : "webcodecs",
       // Version 2 makes the experimental material opt-in even for people whose
       // older local preference had it enabled. Later choices remain persistent.
-      skinTextureEnabled: savedStorageVersion < settingsStorageVersion
+      skinTextureEnabled: savedStorageVersion < 2
         ? false
         : parsed.skinTextureEnabled ?? initialSettings.skinTextureEnabled,
       trackingSmoothing: upgradingSingleSmoothingControl
@@ -337,6 +343,8 @@ function App() {
     return Number.isFinite(saved) ? Math.min(125, Math.max(80, saved)) : 100;
   });
   const [fullscreen, setFullscreen] = useState(false);
+  const [outputControlsHidden, setOutputControlsHidden] = useState(false);
+  const [popoutState, setPopoutState] = useState<"idle" | "starting" | "active">("idle");
   const [trackerRestartKey, setTrackerRestartKey] = useState(0);
   const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -375,6 +383,11 @@ function App() {
   const mediaChunksRef = useRef<Blob[]>([]);
   const avatarCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recordingTickerRef = useRef<number | null>(null);
+  const outputHideTimerRef = useRef<number | null>(null);
+  const outputChannelRef = useRef<BroadcastChannel | null>(null);
+  const outputHeartbeatRef = useRef(0);
+  const popoutStateRef = useRef(popoutState);
+  const webPopoutRef = useRef<Window | null>(null);
   const playbackAnimationRef = useRef<number | null>(null);
   const trackingFrameRef = useRef<TrackingFrame | null>(null);
   const faceAlignmentRef = useRef<FaceAlignment>(faceAlignment);
@@ -391,12 +404,58 @@ function App() {
   faceAlignmentRef.current = faceAlignment;
   trackingSmoothingRef.current = settings.trackingSmoothingEnabled ? settings.trackingSmoothing : 0;
   motionSmoothingRef.current = settings.motionSmoothingEnabled ? settings.motionSmoothing : 0;
+  popoutStateRef.current = popoutState;
 
   const pushToast = useCallback((toast: Omit<ToastMessage, "id">) => {
     const message = { ...toast, id: ++toastIdRef.current };
     setToasts((current) => [...current.slice(-3), message]);
     return message.id;
   }, []);
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const channel = new BroadcastChannel(outputChannelName);
+    outputChannelRef.current = channel;
+    channel.onmessage = (event: MessageEvent<OutputToMainMessage>) => {
+      const message = event.data;
+      if (message.type === "ready") {
+        outputHeartbeatRef.current = Date.now();
+        setPopoutState("active");
+        pushToast({ type: "success", title: "Output popout connected", message: "The popout now owns the only 3D renderer. Camera tracking and controls remain in the studio." });
+      } else if (message.type === "heartbeat") {
+        outputHeartbeatRef.current = message.timestamp;
+      } else if (message.type === "closed") {
+        setPopoutState("idle");
+        outputHeartbeatRef.current = 0;
+      } else if (message.type === "record-result") {
+        setLastVideo(message.blob);
+      } else if (message.type === "error") {
+        if (message.operation === "Popout microphone") {
+          pushToast({ type: "warning", title: "Popout recording has no microphone", message: message.message, duration: 8_000 });
+        } else {
+          setDeviceError(`${message.operation}: ${message.message}`);
+        }
+      }
+    };
+    return () => {
+      channel.close();
+      outputChannelRef.current = null;
+    };
+  }, [pushToast]);
+
+  useEffect(() => {
+    if (popoutState !== "active") return;
+    const monitor = window.setInterval(() => {
+      if (Date.now() - outputHeartbeatRef.current < 4_000) return;
+      setPopoutState("idle");
+      if (recordingState !== "idle") {
+        setRecordingState("idle");
+        if (recordingTickerRef.current) window.clearInterval(recordingTickerRef.current);
+      }
+      pushToast({ type: "warning", title: "Output popout disconnected", message: "The canvas has been restored to the studio. Any unfinished popout video could not be recovered." });
+    }, 1_000);
+    return () => window.clearInterval(monitor);
+  }, [popoutState, pushToast, recordingState]);
 
   useEffect(() => {
     localStorage.setItem("gnm-studio-settings", JSON.stringify(settings));
@@ -472,14 +531,78 @@ function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [backendMenu]);
 
+  const clearOutputHideTimer = useCallback(() => {
+    if (outputHideTimerRef.current !== null) window.clearTimeout(outputHideTimerRef.current);
+    outputHideTimerRef.current = null;
+  }, []);
+
+  const scheduleOutputControls = useCallback(() => {
+    clearOutputHideTimer();
+    if (!fullscreen) {
+      setOutputControlsHidden(false);
+      return;
+    }
+    if (settings.outputAlwaysHideControls) {
+      setOutputControlsHidden(true);
+      return;
+    }
+    setOutputControlsHidden(false);
+    if (settings.outputAutoHideEnabled) {
+      outputHideTimerRef.current = window.setTimeout(
+        () => setOutputControlsHidden(true),
+        Math.max(0.5, settings.outputAutoHideDelay) * 1_000,
+      );
+    }
+  }, [clearOutputHideTimer, fullscreen, settings.outputAlwaysHideControls, settings.outputAutoHideDelay, settings.outputAutoHideEnabled]);
+
+  const exitFullscreenView = useCallback(async () => {
+    try {
+      if (isDesktopRuntime) {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().setFullscreen(false);
+      } else if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+    } catch (error) {
+      setDeviceError(`Exit fullscreen: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setFullscreen(false);
+      setOutputControlsHidden(false);
+      clearOutputHideTimer();
+    }
+  }, [clearOutputHideTimer]);
+
   useEffect(() => {
     if (!fullscreen) return;
-    const exitFocusedView = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFullscreen(false);
+    scheduleOutputControls();
+    const handleKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      if (event.key === "Escape") void exitFullscreenView();
+      if (event.key.toLowerCase() === "h") {
+        event.preventDefault();
+        clearOutputHideTimer();
+        setOutputControlsHidden((value) => !value);
+      }
     };
-    window.addEventListener("keydown", exitFocusedView);
-    return () => window.removeEventListener("keydown", exitFocusedView);
-  }, [fullscreen]);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      clearOutputHideTimer();
+    };
+  }, [clearOutputHideTimer, exitFullscreenView, fullscreen, scheduleOutputControls]);
+
+  useEffect(() => {
+    if (isDesktopRuntime) return;
+    const syncFullscreen = () => {
+      if (!document.fullscreenElement) {
+        setFullscreen(false);
+        setOutputControlsHidden(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
 
   useEffect(() => {
     const suppressContextMenu = (event: MouseEvent) => event.preventDefault();
@@ -711,7 +834,83 @@ function App() {
     });
   };
 
-  const toggleFullscreen = () => setFullscreen((value) => !value);
+  const toggleFullscreen = async () => {
+    if (fullscreen) {
+      await exitFullscreenView();
+      return;
+    }
+    try {
+      if (isDesktopRuntime) {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().setFullscreen(true);
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+      setFullscreen(true);
+      setOutputControlsHidden(settings.outputAlwaysHideControls);
+    } catch (error) {
+      setDeviceError(`Enter fullscreen: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const postToOutput = (message: MainToOutputMessage) => outputChannelRef.current?.postMessage(message);
+
+  const openOutputPopout = async () => {
+    if (popoutState === "active") {
+      postToOutput({ type: "focus" });
+      return;
+    }
+    if (typeof BroadcastChannel === "undefined") {
+      setDeviceError("Output popout is unavailable because this WebView does not support BroadcastChannel.");
+      return;
+    }
+    setPopoutState("starting");
+    outputHeartbeatRef.current = Date.now();
+    try {
+      if (isDesktopRuntime) {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const existing = await WebviewWindow.getByLabel("output");
+        if (existing) {
+          await existing.setFocus();
+        } else {
+          const output = new WebviewWindow("output", {
+            url: "?output=1",
+            title: `${activeProfile.label} · GNM Studio Output`,
+            width: 1280,
+            height: 720,
+            minWidth: 480,
+            minHeight: 270,
+            resizable: true,
+            decorations: true,
+            center: true,
+          });
+          void output.once("tauri://error", (event) => {
+            setPopoutState("idle");
+            setDeviceError(`Open output popout: ${String(event.payload)}`);
+          });
+        }
+      } else {
+        const url = new URL(window.location.href);
+        url.searchParams.set("output", "1");
+        webPopoutRef.current = window.open(url, "gnm-studio-output", "popup,width=1280,height=720,resizable=yes");
+        if (!webPopoutRef.current) throw new Error("The browser blocked the popout. Allow popups for this site and retry.");
+      }
+      window.setTimeout(() => {
+        if (popoutStateRef.current !== "starting") return;
+        webPopoutRef.current?.close();
+        setPopoutState("idle");
+        setDeviceError("Output popout did not connect within 10 seconds. It was closed so the studio renderer could be restored safely.");
+      }, 10_000);
+    } catch (error) {
+      setPopoutState("idle");
+      setDeviceError(`Open output popout: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const closeOutputPopout = () => {
+    postToOutput({ type: "close" });
+    webPopoutRef.current?.close();
+  };
 
   const openExternal = async (url: string) => {
     try {
@@ -861,7 +1060,7 @@ function App() {
         type: unavailable ? "warning" : "success",
         title: unavailable ? "Some capture hardware is unavailable" : "Capture devices connected",
         message: `${connected[0].toUpperCase() + connected.slice(1)} access is ready. Available capture processing remains local to this computer.${unavailable ? ` ${unavailable[0].toUpperCase() + unavailable.slice(1)} access is unavailable, but the avatar editor still works.` : ""}`,
-        detail: unavailable ? `${unavailable[0].toUpperCase() + unavailable.slice(1)} access was unavailable or not granted. GNM avatar editing and rendering remain usable.` : undefined,
+        detail: unavailable ? `${unavailable[0].toUpperCase() + unavailable.slice(1)} access was unavailable or not granted. Offline avatar editing and rendering remain usable.` : undefined,
         duration: unavailable ? 8_000 : 5_000,
       });
     } catch (error) {
@@ -1168,6 +1367,14 @@ function App() {
   };
 
   const startRecording = async () => {
+    if (popoutState === "active" && settings.recordingMode !== "motion" && !settings.showAvatar) {
+      pushToast({
+        type: "warning",
+        title: "Popout avatar layer is disabled",
+        message: "The clean popout intentionally excludes webcam pixels. Enable the avatar before recording there, or bring the canvas back for a camera composite.",
+      });
+      return;
+    }
     if (!trackingFrame && settings.recordingMode === "motion") {
       pushToast({
         type: "warning",
@@ -1180,7 +1387,7 @@ function App() {
       pushToast({
         type: "warning",
         title: "Avatar layer is disabled",
-        message: "Avatar video mode records only enabled avatar content. Turn on GNM avatar or choose Camera + avatar mode.",
+        message: `Avatar video mode records only enabled avatar content. Turn on the ${avatarProfiles[settings.avatarKind].shortLabel} avatar or choose Camera + avatar mode.`,
       });
       return;
     }
@@ -1188,7 +1395,7 @@ function App() {
       pushToast({
         type: "warning",
         title: "No visual layers are enabled",
-        message: "Enable Webcam, GNM avatar, or both before recording a composite video.",
+        message: `Enable Webcam, the ${avatarProfiles[settings.avatarKind].shortLabel} avatar, or both before recording a composite video.`,
       });
       return;
     }
@@ -1205,19 +1412,30 @@ function App() {
     setRecordingElapsed(0);
 
     if (settings.recordingMode !== "motion") {
-      const canvas = avatarCanvasRef.current;
-      if (!canvas) throw new Error("The rendered capture surface is not ready yet.");
-      if (canvas) {
+      const videoBitrate = settings.videoBitrateMbps * 1_000_000;
+      const audioBitrate = settings.audioBitrateKbps * 1_000;
+      setLastVideoQuality({ videoBitrate, audioBitrate });
+      if (popoutState === "active") {
+        postToOutput({
+          type: "record",
+          action: "start",
+          fps: settings.exportFps,
+          videoBitrate,
+          audioBitrate,
+        });
+        if (settings.recordingMode === "composite") {
+          pushToast({ type: "info", title: "Recording clean popout output", message: "The output window is canvas-only, so this take contains the avatar/background and microphone but not the webcam layer." });
+        }
+      } else {
+        const canvas = avatarCanvasRef.current;
+        if (!canvas) throw new Error("The rendered capture surface is not ready yet.");
         const stream = canvas.captureStream(settings.exportFps);
         captureStream = stream;
         if (!settings.muted) {
           micStreamRef.current?.getAudioTracks().forEach((track) => stream.addTrack(track.clone()));
         }
         const mimeType = preferredRecorderMimeType();
-        const videoBitrate = settings.videoBitrateMbps * 1_000_000;
-        const audioBitrate = settings.audioBitrateKbps * 1_000;
         const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: videoBitrate, audioBitsPerSecond: audioBitrate });
-        setLastVideoQuality({ videoBitrate, audioBitrate });
         mediaChunksRef.current = [];
         recorder.ondataavailable = (event) => { if (event.data.size) mediaChunksRef.current.push(event.data); };
         recorder.onstop = () => {
@@ -1282,11 +1500,13 @@ function App() {
 
   const togglePause = () => {
     if (recordingState === "recording") {
-      mediaRecorderRef.current?.pause();
+      if (popoutState === "active") postToOutput({ type: "record", action: "pause" });
+      else mediaRecorderRef.current?.pause();
       setRecordingState("paused");
       pushToast({ type: "warning", title: "Recording paused", message: "The current take is preserved. Resume when ready." });
     } else if (recordingState === "paused") {
-      mediaRecorderRef.current?.resume();
+      if (popoutState === "active") postToOutput({ type: "record", action: "resume" });
+      else mediaRecorderRef.current?.resume();
       setRecordingState("recording");
       pushToast({ type: "info", title: "Recording resumed", message: "Motion and enabled media tracks are recording again." });
     } else if (recordedFrames.length) {
@@ -1322,7 +1542,8 @@ function App() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop();
+    if (popoutState === "active" && settings.recordingMode !== "motion") postToOutput({ type: "record", action: "stop" });
+    else if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop();
     mediaRecorderRef.current = null;
     if (recordingTickerRef.current) clearInterval(recordingTickerRef.current);
     setRecordedFrames([...recordingFramesRef.current]);
@@ -1331,7 +1552,9 @@ function App() {
     pushToast({
       type: "success",
       title: "Take recorded",
-      message: `${recordingFramesRef.current.length.toLocaleString()} motion frames are ready for playback and export.`,
+      message: settings.recordingMode === "motion"
+        ? `${recordingFramesRef.current.length.toLocaleString()} motion frames are ready for playback and export.`
+        : `The ${avatarProfiles[settings.avatarKind].shortLabel} video take is finalizing and will be ready for MP4 export momentarily${recordingFramesRef.current.length ? `; ${recordingFramesRef.current.length.toLocaleString()} motion frames were also retained` : ""}.`,
     });
   };
 
@@ -1356,6 +1579,9 @@ function App() {
       setPlaying(false);
       setDeviceError("");
       setNeutralFrame(motion.neutral);
+      if (motion.avatarKind) updateSetting("avatarKind", motion.avatarKind);
+      setManualExpressions(motion.manualExpressions);
+      setFrozenExpressions(motion.frozenExpressions);
       recordingFramesRef.current = motion.frames;
       setRecordedFrames(motion.frames);
       setLastVideo(null);
@@ -1382,6 +1608,10 @@ function App() {
     try {
       const payload = {
         format: "gnm-studio-motion", version: 1, fps: settings.exportFps,
+        avatarKind: settings.avatarKind,
+        retargetProfile: activeProfile.label,
+        manualExpressions,
+        frozenExpressions,
         neutral: neutralFrame, frames: recordedFrames,
       };
       const bytes = new TextEncoder().encode(JSON.stringify(payload, null, 2));
@@ -1396,7 +1626,17 @@ function App() {
 
   const renderRecordedMotionVideo = async () => {
     if (!recordedFrames.length) throw new Error("There is no recorded motion take to render.");
-    const canvas = avatarCanvasRef.current;
+    let canvas = avatarCanvasRef.current;
+    if (!canvas && popoutState !== "idle") {
+      pushToast({ type: "info", title: "Restoring the studio canvas", message: "Motion-to-video rendering needs the local output surface, so the popout is closing before the offline pass." });
+      closeOutputPopout();
+      const deadline = performance.now() + 10_000;
+      while (!avatarCanvasRef.current && performance.now() < deadline) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      canvas = avatarCanvasRef.current;
+      if (canvas) await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
+    }
     if (!canvas) throw new Error("The rendered capture surface is not ready yet.");
     if (typeof canvas.captureStream !== "function") {
       throw new Error("This browser cannot capture the rendered avatar canvas. Use a current Chromium-based browser.");
@@ -1580,9 +1820,22 @@ function App() {
           rotation: settings.skinTextureRotation,
           feather: settings.skinTextureFeather,
         },
+        {
+          avatarKind: settings.avatarKind,
+          neutralFrame,
+          mirror: settings.mirror,
+          headPose: {
+            enabled: settings.headRotationEnabled,
+            yawStrength: settings.headYawStrength,
+            pitchStrength: settings.headPitchStrength,
+            rollStrength: settings.headRollStrength,
+            deadZone: settings.headRotationDeadZone,
+            smoothing: settings.headRotationSmoothing,
+          },
+        },
       );
-      const result = await saveBytes(bytes, timestampedFilename("glb", "_animation"), "model/gltf-binary");
-      showSaveResult("Blender export complete", "The animated GLB with GNM morph targets", result);
+      const result = await saveBytes(bytes, timestampedFilename("glb", `_${settings.avatarKind}_animation`), "model/gltf-binary");
+      showSaveResult("Blender export complete", `The animated GLB with ${activeProfile.label} morph targets`, result);
     } catch (error) {
       setDeviceError(`Animated GLB export failed: ${String(error)}`);
     } finally {
@@ -1613,11 +1866,20 @@ function App() {
   const connectedCaptureCount = Number(cameraAccess === "ready") + Number(microphoneAccess === "ready");
   const captureStatusTitle = `Camera: ${cameraAccess === "ready" ? "ready" : "not connected"}. Microphone: ${microphoneAccess === "ready" ? "ready" : "not connected"}. Right-click to choose the tracking backend.`;
   const displayedFrame = playbackFrame ?? applyNeutralBaseline(trackingFrame, neutralFrame);
+  const displayedFrameRef = useRef<TrackingFrame | null>(displayedFrame);
+  displayedFrameRef.current = displayedFrame;
   const liveSemantic = useMemo(
     () => semanticInfluences(Object.fromEntries((displayedFrame?.blendshapes ?? []).map(({ name, score }) => [name, score]))),
     [displayedFrame],
   );
-  const toggleExpressionFreeze = (name: ExpressionName) => {
+  const liveFacecap = useMemo(
+    () => facecapInfluences(Object.fromEntries((displayedFrame?.blendshapes ?? []).map(({ name, score }) => [name, score]))),
+    [displayedFrame],
+  );
+  const activeProfile = avatarProfiles[settings.avatarKind];
+  const identityControlsDisabled = isWebEdition || !activeProfile.supportsIdentity;
+  const activeLiveExpressions: Record<string, number> = settings.avatarKind === "facecap" ? liveFacecap : liveSemantic;
+  const toggleExpressionFreeze = (name: string) => {
     setFrozenExpressions((current) => {
       if (name in current) {
         const next = { ...current };
@@ -1626,20 +1888,59 @@ function App() {
       }
       return {
         ...current,
-        [name]: Math.min(1, (liveSemantic[name] ?? 0) + (manualExpressions[name] ?? 0)),
+        [name]: Math.min(1, (activeLiveExpressions[name] ?? 0) + (manualExpressions[name] ?? 0)),
       };
     });
+  };
+
+  const resetActiveExpressions = () => {
+    const activeNames = new Set(activeProfile.expressionNames);
+    setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !activeNames.has(name))));
+    setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !activeNames.has(name))));
   };
 
   const handleSkinMaterialError = useCallback((message: string) => {
     setDeviceError(`Experimental skin material: ${message}`);
   }, []);
+  const handleCompositeCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
+    avatarCanvasRef.current = canvas;
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !cameraStreamRef.current) return;
+    if (video.srcObject !== cameraStreamRef.current) video.srcObject = cameraStreamRef.current;
+    void video.play().catch(() => undefined);
+  }, [popoutState]);
+
+  useEffect(() => {
+    if (popoutState !== "active") return;
+    const snapshot: OutputSnapshot = {
+      settings,
+      frame: displayedFrameRef.current,
+      neutralFrame,
+      identityVertices,
+      manualExpressions,
+      frozenExpressions,
+      trackingReady: Boolean(trackingFrameRef.current),
+      recordingActive: motionVideoRendering || recordingState !== "idle",
+      resetViewSignal,
+      backgroundImageUrl,
+    };
+    postToOutput({ type: "snapshot", snapshot });
+  }, [backgroundImageUrl, frozenExpressions, identityVertices, manualExpressions, motionVideoRendering, neutralFrame, popoutState, recordingState, resetViewSignal, settings]);
+
+  useEffect(() => {
+    if (popoutState !== "active") return;
+    postToOutput({ type: "frame", frame: displayedFrame, trackingReady: Boolean(trackingFrame) });
+  }, [displayedFrame, popoutState, trackingFrame]);
 
   return (
     <>
     <main
-      className={`app-shell ${recordingState === "recording" ? "is-recording" : ""} ${fullscreen ? "viewport-focus" : ""}`}
+      className={`app-shell ${recordingState === "recording" ? "is-recording" : ""} ${fullscreen ? "viewport-focus" : ""} ${outputControlsHidden ? "output-controls-hidden" : ""}`}
       style={{ "--ui-scale": (uiScale / 100).toFixed(2) } as React.CSSProperties}
+      onPointerMove={fullscreen ? scheduleOutputControls : undefined}
     >
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><span className="brand-head-icon" style={brandHeadIconStyle} /></span><div><strong>GNM</strong><span>Studio</span></div>{isWebEdition && <small className="edition-badge">WEB</small>}</div>
@@ -1683,14 +1984,33 @@ function App() {
         </div>
         {activePanel === "avatar" ? (
           <>
-            <section className="panel-section hero-card"><div className="avatar-orb"><Box size={28} /></div><div><span>Active model</span><strong>GNM Head v3</strong><small>{(gnmInfo?.vertices ?? 17_821).toLocaleString()} vertices · {(gnmInfo?.identityDimensions ?? 253) + (gnmInfo?.expressionDimensions ?? 383)} controls</small></div><ChevronDown size={17} /></section>
-            <section className="panel-section" data-workspace-target="create"><div className="section-heading"><span>Identity</span><button onClick={randomizeIdentity} disabled={isWebEdition || identityStatus === "generating"}><RefreshCw size={14} />{identityStatus === "generating" ? "Generating" : "Randomize"}</button></div><label className="field-label">Seed<input className="text-input" value={identitySeed} disabled={isWebEdition} onChange={(event) => setIdentitySeed(event.target.value)} onBlur={() => { if (!isWebEdition) void generateIdentity(); }} /></label><div className="two-up"><label className="field-label">Presentation<select value={identityGender} disabled={isWebEdition} onChange={(event) => setIdentityGender(event.target.value as typeof identityGender)}><option value="blend">Blend</option><option value="female">Feminine</option><option value="male">Masculine</option></select></label><label className="field-label">Population<select value={identityEthnicity} disabled={isWebEdition} onChange={(event) => setIdentityEthnicity(event.target.value as typeof identityEthnicity)}><option value="blend">Blend</option><option value="asian">Asian</option><option value="black">Black</option><option value="middle_eastern">Middle Eastern</option><option value="white">White</option></select></label></div><button className="secondary-button wide" onClick={() => void generateIdentity()} disabled={isWebEdition || identityStatus === "generating"}>{isWebEdition ? "Desktop-only identity generator" : identityStatus === "generating" ? "Building GNM mesh…" : "Apply identity"}</button>{isWebEdition && <p className="helper-copy web-edition-note">The native seeded identity evaluator is desktop-only. Online you can track and animate the base GNM head, use every expression/material control, record, and export.</p>}</section>
+            <section className="panel-section hero-card model-picker">
+              <div className="avatar-orb"><Box size={28} /></div>
+              <div>
+                <span>Active model</span>
+                <select
+                  aria-label="Mocap avatar model"
+                  value={settings.avatarKind}
+                  onChange={(event) => {
+                    const avatarKind = event.target.value as AvatarKind;
+                    updateSetting("avatarKind", avatarKind);
+                    pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: avatarKind === "facecap" ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." });
+                  }}
+                >
+                  <option value="gnm">GNM Head v3</option>
+                  <option value="facecap">FaceCap 52 · MIT</option>
+                </select>
+                <small>{settings.avatarKind === "gnm" ? `${(gnmInfo?.vertices ?? 17_821).toLocaleString()} vertices · ${(gnmInfo?.identityDimensions ?? 253) + (gnmInfo?.expressionDimensions ?? 383)} native controls` : "52 direct MediaPipe/ARKit morph targets"}</small>
+              </div>
+              <ChevronDown size={17} />
+            </section>
+            <section className="panel-section" data-workspace-target="create"><div className="section-heading"><span>Identity</span><button onClick={randomizeIdentity} disabled={identityControlsDisabled || identityStatus === "generating"}><RefreshCw size={14} />{identityStatus === "generating" ? "Generating" : "Randomize"}</button></div><label className="field-label">Seed<input className="text-input" value={identitySeed} disabled={identityControlsDisabled} onChange={(event) => setIdentitySeed(event.target.value)} onBlur={() => { if (!identityControlsDisabled) void generateIdentity(); }} /></label><div className="two-up"><label className="field-label">Presentation<select value={identityGender} disabled={identityControlsDisabled} onChange={(event) => setIdentityGender(event.target.value as typeof identityGender)}><option value="blend">Blend</option><option value="female">Feminine</option><option value="male">Masculine</option></select></label><label className="field-label">Population<select value={identityEthnicity} disabled={identityControlsDisabled} onChange={(event) => setIdentityEthnicity(event.target.value as typeof identityEthnicity)}><option value="blend">Blend</option><option value="asian">Asian</option><option value="black">Black</option><option value="middle_eastern">Middle Eastern</option><option value="white">White</option></select></label></div><button className="secondary-button wide" onClick={() => void generateIdentity()} disabled={identityControlsDisabled || identityStatus === "generating"}>{!activeProfile.supportsIdentity ? "FaceCap uses its supplied identity" : isWebEdition ? "Desktop-only identity generator" : identityStatus === "generating" ? "Building GNM mesh…" : "Apply identity"}</button>{identityControlsDisabled && <p className="helper-copy web-edition-note">{!activeProfile.supportsIdentity ? "FaceCap has a fixed supplied identity; all 52 expressions, tracking, material and export tools remain available." : "The native seeded identity evaluator is desktop-only. Online you can track and animate the base GNM head, use every expression/material control, record, and export."}</p>}</section>
             <details className="panel-section experimental-skin">
               <summary><span><strong>Skin material</strong><small>Experimental</small></span><span className={settings.skinTextureEnabled ? "skin-summary-state enabled" : "skin-summary-state"}>{settings.skinTextureEnabled ? "Microtexture on" : "Microtexture off"}<ChevronDown size={14} /></span></summary>
               <div className="experimental-skin-content">
                 <label className={`toggle-row ${settings.skinTextureEnabled ? "is-active" : ""}`}><span>Skin microtexture<small>{settings.skinTextureEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.skinTextureEnabled} onChange={(event) => updateSetting("skinTextureEnabled", event.target.checked)} /></label>
                 <div className="skin-tone-field">
-                  <span>Base colour</span>
+                  <span>Base colour · Neutral disables skin tint</span>
                   <div className="skin-tone-options" role="radiogroup" aria-label="Skin base colour">
                     {skinToneOptions.map((tone) => <button type="button" key={tone.id} role="radio" aria-checked={settings.skinTone === tone.id} className={settings.skinTone === tone.id ? "active" : ""} style={{ "--skin-tone": tone.swatch } as React.CSSProperties} title={tone.label} onClick={() => updateSetting("skinTone", tone.id)}><span /><small>{tone.label}</small></button>)}
                   </div>
@@ -1702,8 +2022,8 @@ function App() {
               </div>
             </details>
             <section className="panel-section" data-workspace-target="edit">
-              <div className="section-heading"><span>Expression</span><small>{Object.keys(frozenExpressions).length ? `${Object.keys(frozenExpressions).length} frozen` : "20 GNM semantics"}</small></div>
-              {semanticExpressionNames.slice(0, 6).map((name) => (
+              <div className="section-heading"><span>Expression</span><small>{Object.keys(frozenExpressions).length ? `${Object.keys(frozenExpressions).length} frozen` : `${activeProfile.expressionCount} ${activeProfile.shortLabel} controls`}</small></div>
+              {settings.avatarKind === "gnm" && semanticExpressionNames.slice(0, 6).map((name) => (
                 <ExpressionControl
                   key={name}
                   name={name}
@@ -1713,7 +2033,7 @@ function App() {
                   onToggle={() => toggleExpressionFreeze(name)}
                 />
               ))}
-              <details className="advanced-expression">
+              {settings.avatarKind === "gnm" && <details className="advanced-expression">
                 <summary><SlidersHorizontal size={15} />All semantic controls</summary>
                 {semanticExpressionNames.slice(6).map((name) => (
                   <ExpressionControl
@@ -1725,8 +2045,23 @@ function App() {
                     onToggle={() => toggleExpressionFreeze(name)}
                   />
                 ))}
-              </details>
-              <button className="secondary-button wide" onClick={() => { setManualExpressions({}); setFrozenExpressions({}); }}><RotateCcw size={15} />Reset expressions and locks</button>
+              </details>}
+              {settings.avatarKind === "facecap" && facecapControlGroups.map((group, index) => (
+                <details className="advanced-expression facecap-expression-group" open={index === 3 || index === 4} key={group.label}>
+                  <summary><SlidersHorizontal size={15} />{group.label}<small>{group.names.length}</small></summary>
+                  {group.names.map((name) => (
+                    <ExpressionControl
+                      key={name}
+                      name={name}
+                      value={name in frozenExpressions ? frozenExpressions[name] : manualExpressions[name] ?? 0}
+                      frozen={name in frozenExpressions}
+                      onChange={(value) => setManualExpressions((current) => ({ ...current, [name]: value }))}
+                      onToggle={() => toggleExpressionFreeze(name)}
+                    />
+                  ))}
+                </details>
+              ))}
+              <button className="secondary-button wide" onClick={resetActiveExpressions}><RotateCcw size={15} />Reset {activeProfile.shortLabel} expressions and locks</button>
             </section>
           </>
         ) : (
@@ -1773,9 +2108,12 @@ function App() {
             <button disabled={calibrating} className={settings.showWebcam && !settings.showAvatar ? "active" : ""} aria-pressed={settings.showWebcam && !settings.showAvatar} onClick={() => { updateSetting("showWebcam", true); updateSetting("showAvatar", false); }}>Camera</button>
             <button disabled={calibrating} className={!settings.showWebcam && settings.showAvatar ? "active" : ""} aria-pressed={!settings.showWebcam && settings.showAvatar} onClick={() => { updateSetting("showWebcam", false); updateSetting("showAvatar", true); }}>Avatar</button>
           </div>
-          <div className="toolbar-actions"><button disabled={calibrating} className={`icon-button ${settings.mirror ? "active" : ""}`} title={settings.mirror ? "Mirrored camera and motion" : "Raw camera and motion"} aria-pressed={settings.mirror} onClick={() => updateSetting("mirror", !settings.mirror)}><FlipHorizontal2 size={16} /></button><button className="icon-button" title="Reset view" onClick={() => setResetViewSignal((value) => value + 1)}><RotateCcw size={16} /></button><button className={`icon-button ${fullscreen ? "active" : ""}`} title={fullscreen ? "Exit focused view (Esc)" : "Focus viewing canvas"} aria-pressed={fullscreen} onClick={toggleFullscreen}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
+          <div className="toolbar-actions"><button disabled={calibrating} className={`icon-button ${settings.mirror ? "active" : ""}`} title={settings.mirror ? "Mirrored camera and motion" : "Raw camera and motion"} aria-pressed={settings.mirror} onClick={() => updateSetting("mirror", !settings.mirror)}><FlipHorizontal2 size={16} /></button><button className="icon-button" title="Reset view" onClick={() => setResetViewSignal((value) => value + 1)}><RotateCcw size={16} /></button><button className={`icon-button ${popoutState !== "idle" ? "active" : ""}`} title={popoutState === "idle" ? "Open a clean canvas-only output window" : popoutState === "starting" ? "Output popout is connecting" : "Focus output popout"} aria-pressed={popoutState !== "idle"} disabled={calibrating || popoutState === "starting" || (popoutState === "idle" && recordingState !== "idle")} onClick={() => void openOutputPopout()}><PictureInPicture2 size={16} /></button><button className={`icon-button ${fullscreen ? "active" : ""}`} title={fullscreen ? "Exit fullscreen output (Esc)" : "Fullscreen canvas output"} aria-pressed={fullscreen} disabled={popoutState !== "idle"} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
         </div>
+        {popoutState !== "idle" && <video ref={videoRef} className="tracking-video-hidden" autoPlay muted playsInline />}
+        {popoutState === "idle" ? (
         <Stage
+          avatarKind={settings.avatarKind}
           videoRef={videoRef}
           frame={displayedFrame}
           neutralFrame={neutralFrame}
@@ -1796,6 +2134,14 @@ function App() {
           backgroundImageZoom={settings.backgroundImageZoom}
           mouseLightEnabled={settings.mouseLightEnabled}
           mouseLightIntensity={settings.mouseLightIntensity}
+          headPoseSettings={{
+            enabled: settings.headRotationEnabled,
+            yawStrength: settings.headYawStrength,
+            pitchStrength: settings.headPitchStrength,
+            rollStrength: settings.headRollStrength,
+            deadZone: settings.headRotationDeadZone,
+            smoothing: settings.headRotationSmoothing,
+          }}
           calibrating={calibrating}
           calibrationComplete={calibrationComplete}
           faceAlignment={faceAlignment}
@@ -1808,17 +2154,28 @@ function App() {
           recordingActive={motionVideoRendering || recordingState !== "idle"}
           resetViewSignal={resetViewSignal}
           onCancelCalibration={cancelCalibration}
-          onCompositeCanvas={useCallback((canvas: HTMLCanvasElement | null) => { avatarCanvasRef.current = canvas; }, [])}
+          onCompositeCanvas={handleCompositeCanvas}
           onSkinMaterialError={handleSkinMaterialError}
         />
+        ) : (
+          <div className="popout-placeholder">
+            <PictureInPicture2 size={38} />
+            <strong>{popoutState === "starting" ? "Opening output canvas…" : "Canvas is live in the popout"}</strong>
+            <span>The popout owns the only 3D renderer. Camera tracking, editing and exports continue here without duplicate GPU work.</span>
+            <div>
+              <button className="secondary-button" disabled={popoutState !== "active"} onClick={() => postToOutput({ type: "focus" })}>Focus popout</button>
+              <button className="primary-button" disabled={popoutState !== "active" || recordingState !== "idle"} onClick={closeOutputPopout} title={recordingState !== "idle" ? "Stop the current recording before closing the output" : "Close the popout and restore this canvas"}>Bring canvas back</button>
+            </div>
+          </div>
+        )}
         {permissionState !== "ready" && !devicePromptDismissed && (
-          <div className="permission-card"><Aperture size={28} /><div><strong>Connect capture devices (optional)</strong><span>Camera and microphone are only needed for live tracking and audio. Manual GNM tools remain available.</span>{deviceError && <small className="error-text">{deviceError}</small>}</div><div className="permission-actions"><button className="primary-button" onClick={requestDeviceAccess} disabled={permissionState === "asking"}>{permissionState === "asking" ? "Waiting…" : "Enable camera & microphone"}</button><button className="secondary-button" onClick={() => { setDevicePromptDismissed(true); pushToast({ type: "info", title: "Continuing without capture", message: "GNM avatar creation, manual expressions, backgrounds, lighting, and avatar-video export remain available." }); }}>Continue without capture</button></div></div>
+          <div className="permission-card"><Aperture size={28} /><div><strong>Connect capture devices (optional)</strong><span>Camera and microphone are only needed for live tracking and audio. Manual avatar tools remain available.</span>{deviceError && <small className="error-text">{deviceError}</small>}</div><div className="permission-actions"><button className="primary-button" onClick={requestDeviceAccess} disabled={permissionState === "asking"}>{permissionState === "asking" ? "Waiting…" : "Enable camera & microphone"}</button><button className="secondary-button" onClick={() => { setDevicePromptDismissed(true); pushToast({ type: "info", title: "Continuing without capture", message: "Avatar creation, manual expressions, backgrounds, lighting, and avatar-video export remain available." }); }}>Continue without capture</button></div></div>
         )}
       </section>
 
       <aside className="sidebar right-sidebar">
         <section className={`panel-section tracking-score tracker-${trackerStatus}`}><div className="score-ring" style={{ "--score": `${faceConfidence * 3.6}deg` } as React.CSSProperties}><strong>{faceConfidence}</strong><small>%</small></div><div><span>Tracking quality</span><strong>{trackingQualityLabel}</strong><small title={trackerFallbackReason || undefined}>{settings.trackingFps} FPS target · {trackerDelegate}</small><button className="inline-retry tracker-reload" disabled={cameraAccess !== "ready"} title={cameraAccess === "ready" ? "Reload the local MediaPipe model and face-tracking worker" : "Connect a camera before reloading the tracker"} onClick={() => reloadTracker()}><RefreshCw size={12} />{trackerStatus === "error" ? "Retry tracker" : trackerStatus === "loading" ? "Restart loading" : "Reload tracker"}</button></div></section>
-        <section className="panel-section"><div className="section-heading"><span>Layers</span><Layers3 size={15} /></div><label className={`toggle-row ${settings.showWebcam ? "is-active" : ""}`}><span><Video size={16} />Webcam<small>{settings.showWebcam ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showWebcam} onChange={(event) => updateSetting("showWebcam", event.target.checked)} /></label><label className={`toggle-row ${settings.showAvatar ? "is-active" : ""}`}><span><Box size={16} />GNM avatar<small>{settings.showAvatar ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showAvatar} onChange={(event) => updateSetting("showAvatar", event.target.checked)} /></label><label className={`toggle-row ${settings.showLandmarks ? "is-active" : ""}`}><span><Gauge size={16} />Landmarks<small>{settings.showLandmarks ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showLandmarks} onChange={(event) => updateSetting("showLandmarks", event.target.checked)} /></label><label className={`toggle-row ${settings.mirror ? "is-active" : ""}`}><span><Eye size={16} />Mirror camera + motion<small>{settings.mirror ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.mirror} onChange={(event) => updateSetting("mirror", event.target.checked)} /></label></section>
+        <section className="panel-section"><div className="section-heading"><span>Layers</span><Layers3 size={15} /></div><label className={`toggle-row ${settings.showWebcam ? "is-active" : ""}`}><span><Video size={16} />Webcam<small>{settings.showWebcam ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showWebcam} onChange={(event) => updateSetting("showWebcam", event.target.checked)} /></label><label className={`toggle-row ${settings.showAvatar ? "is-active" : ""}`}><span><Box size={16} />{activeProfile.shortLabel} avatar<small>{settings.showAvatar ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showAvatar} onChange={(event) => updateSetting("showAvatar", event.target.checked)} /></label><label className={`toggle-row ${settings.showLandmarks ? "is-active" : ""}`}><span><Gauge size={16} />Landmarks<small>{settings.showLandmarks ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showLandmarks} onChange={(event) => updateSetting("showLandmarks", event.target.checked)} /></label><label className={`toggle-row ${settings.mirror ? "is-active" : ""}`}><span><Eye size={16} />Mirror camera + motion<small>{settings.mirror ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.mirror} onChange={(event) => updateSetting("mirror", event.target.checked)} /></label></section>
         <section className="panel-section">
           <div className="section-heading"><span>Avatar display</span></div>
           <label className="slider-row"><span>Opacity</span><input type="range" min="0" max="100" value={settings.avatarOpacity * 100} onChange={(event) => updateSetting("avatarOpacity", Number(event.target.value) / 100)} /><output>{Math.round(settings.avatarOpacity * 100)}</output></label>
@@ -1862,6 +2219,16 @@ function App() {
           <label className={`toggle-row ${settings.motionSmoothingEnabled ? "is-active" : ""}`}><span>Head motion smoothing<small>{settings.motionSmoothingEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.motionSmoothingEnabled} onChange={(event) => updateSetting("motionSmoothingEnabled", event.target.checked)} /></label>
           <label className="slider-row smoothing-slider"><span>Motion strength</span><input type="range" min="0" max="100" step="1" disabled={!settings.motionSmoothingEnabled} value={settings.motionSmoothing * 100} onChange={(event) => updateSetting("motionSmoothing", Number(event.target.value) / 100)} /><output>{Math.round(settings.motionSmoothing * 100)}%</output></label>
           <p className="helper-copy smoothing-help">Face filtering is intentionally stronger; head motion uses a lighter independent filter. Small isolated one-frame twitches are rejected, while sustained and fast deliberate movement remains responsive. 0% is raw.</p>
+          <details className="advanced-expression head-pose-settings">
+            <summary><RotateCcw size={15} />Face-only head rotation</summary>
+            <label className={`toggle-row ${settings.headRotationEnabled ? "is-active" : ""}`}><span>Rotate from face<small>{settings.headRotationEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.headRotationEnabled} onChange={(event) => updateSetting("headRotationEnabled", event.target.checked)} /></label>
+            <label className="slider-row"><span>Yaw</span><input type="range" min="0" max="150" step="1" disabled={!settings.headRotationEnabled} value={settings.headYawStrength * 100} onChange={(event) => updateSetting("headYawStrength", Number(event.target.value) / 100)} /><output>{Math.round(settings.headYawStrength * 100)}%</output></label>
+            <label className="slider-row"><span>Pitch</span><input type="range" min="0" max="150" step="1" disabled={!settings.headRotationEnabled} value={settings.headPitchStrength * 100} onChange={(event) => updateSetting("headPitchStrength", Number(event.target.value) / 100)} /><output>{Math.round(settings.headPitchStrength * 100)}%</output></label>
+            <label className="slider-row"><span>Roll</span><input type="range" min="0" max="150" step="1" disabled={!settings.headRotationEnabled} value={settings.headRollStrength * 100} onChange={(event) => updateSetting("headRollStrength", Number(event.target.value) / 100)} /><output>{Math.round(settings.headRollStrength * 100)}%</output></label>
+            <label className="slider-row"><span>Dead zone</span><input type="range" min="0" max="10" step="0.25" disabled={!settings.headRotationEnabled} value={settings.headRotationDeadZone} onChange={(event) => updateSetting("headRotationDeadZone", Number(event.target.value))} /><output>{settings.headRotationDeadZone.toFixed(1)}°</output></label>
+            <label className="slider-row"><span>Pose smoothing</span><input type="range" min="0" max="100" step="1" disabled={!settings.headRotationEnabled} value={settings.headRotationSmoothing * 100} onChange={(event) => updateSetting("headRotationSmoothing", Number(event.target.value) / 100)} /><output>{Math.round(settings.headRotationSmoothing * 100)}%</output></label>
+            <p className="helper-copy">Uses MediaPipe's facial transform first and face landmarks as a fallback. It does not depend on shoulders or torso pose.</p>
+          </details>
         </section>
       </aside>
 
@@ -1869,7 +2236,7 @@ function App() {
         <AudioMeter devices={microphones} selectedId={settings.microphoneId} onSelect={(id) => updateSetting("microphoneId", id)} level={audioLevel} peak={audioPeak} muted={settings.muted} onToggleMute={() => updateSetting("muted", !settings.muted)} monitoring={monitoring} onToggleMonitoring={() => setMonitoring((value) => !value)} onRefresh={enumerateDevices} />
         <section className="transport">
           <div className="transport-main">
-            {recordingState === "idle" ? <button className="record-button" onClick={startRecording} disabled={calibrating || videoExportProgress !== null} title={calibrating ? "Finish or cancel neutral calibration before recording" : videoExportProgress !== null ? "Wait for video export to finish" : !trackingFrame && settings.recordingMode === "motion" ? "Motion mode needs a detected face" : "Start recording"}><span />Record</button> : <button className="stop-button" onClick={stopRecording}><CircleStop size={18} />Stop</button>}
+            {recordingState === "idle" ? <button className="record-button" onClick={startRecording} disabled={calibrating || videoExportProgress !== null || popoutState === "starting"} title={calibrating ? "Finish or cancel neutral calibration before recording" : videoExportProgress !== null ? "Wait for video export to finish" : popoutState === "starting" ? "Wait for the output popout to connect" : !trackingFrame && settings.recordingMode === "motion" ? "Motion mode needs a detected face" : "Start recording"}><span />Record</button> : <button className="stop-button" onClick={stopRecording}><CircleStop size={18} />Stop</button>}
             <button className="icon-button transport-icon" onClick={togglePause} disabled={videoExportProgress !== null || (recordingState === "idle" && !recordedFrames.length)} title={playing ? "Pause playback" : recordingState === "recording" ? "Pause recording" : recordingState === "paused" ? "Resume recording" : "Play recorded take"}>{recordingState === "recording" || playing ? <Pause size={18} /> : <Play size={18} />}</button>
             {(playbackFrame || playing) && <button className="secondary-button return-live" onClick={returnToLiveTracking} title="Stop playback and return the avatar to the active camera"><RefreshCw size={14} /><span>Return to Live</span></button>}
             <div className="timecode"><strong>{formatTime(recordingElapsed)}</strong><span>{recordedFrames.length || recordingFramesRef.current.length} frames</span></div>
@@ -1976,6 +2343,13 @@ function App() {
               <output>{uiScale}%</output>
             </div>
             <button className="settings-reset" onClick={() => setUiScale(100)} disabled={uiScale === 100}><RotateCcw size={13} />Reset to 100%</button>
+          </section>
+          <section className="settings-group">
+            <div className="settings-label"><span>Fullscreen output</span><small>Clean controls for capture and OBS</small></div>
+            <label className={`toggle-row ${settings.outputAutoHideEnabled ? "is-active" : ""}`}><span>Auto-hide controls<small>{settings.outputAutoHideEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.outputAutoHideEnabled} onChange={(event) => updateSetting("outputAutoHideEnabled", event.target.checked)} /></label>
+            <label className="slider-row"><span>Hide delay</span><input type="range" min="0.5" max="10" step="0.5" disabled={!settings.outputAutoHideEnabled || settings.outputAlwaysHideControls} value={settings.outputAutoHideDelay} onChange={(event) => updateSetting("outputAutoHideDelay", Number(event.target.value))} /><output>{settings.outputAutoHideDelay.toFixed(1)}s</output></label>
+            <label className={`toggle-row ${settings.outputAlwaysHideControls ? "is-active" : ""}`}><span>Always clean<small>{settings.outputAlwaysHideControls ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.outputAlwaysHideControls} onChange={(event) => updateSetting("outputAlwaysHideControls", event.target.checked)} /></label>
+            <p className="helper-copy">Move the pointer to reveal controls, press H to toggle them, and press Esc to exit fullscreen.</p>
           </section>
           <footer className="settings-about">
             <span className="settings-about-icon"><span className="brand-head-icon" style={brandHeadIconStyle} /></span>

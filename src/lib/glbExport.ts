@@ -1,15 +1,36 @@
 import * as THREE from "three";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import type { RecordedFrame, SkinMaterialSettings } from "../types";
+import type {
+  AvatarKind, HeadPoseSettings, RecordedFrame, SkinMaterialSettings, TrackingFrame,
+} from "../types";
 import { mouthOpenInfluence, semanticExpressionNames, semanticInfluences } from "./retarget";
 import { assetUrl } from "./assets";
+import { avatarProfiles, facecapInfluences, facecapTargetNames } from "./avatarProfiles";
+import { resolveHeadPose } from "./headPose";
+import { splitFacecapTongueMaterial } from "./facecapModel";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   type SkinTextureSet,
 } from "./skinMaterial";
 
-const runtimeMorphNames = [...semanticExpressionNames, "jaw_open"] as const;
+const gnmMorphNames = [...semanticExpressionNames, "jaw_open"] as const;
+
+export type AnimatedGlbOptions = {
+  avatarKind: AvatarKind;
+  neutralFrame?: TrackingFrame | null;
+  mirror?: boolean;
+  headPose?: HeadPoseSettings;
+};
+
+const defaultHeadPose: HeadPoseSettings = {
+  enabled: true,
+  yawStrength: 1,
+  pitchStrength: 1,
+  rollStrength: 1,
+  deadZone: 1.5,
+  smoothing: 0.35,
+};
 
 export async function createAnimatedGlb(
   frames: RecordedFrame[],
@@ -17,9 +38,12 @@ export async function createAnimatedGlb(
   manualExpressions: Record<string, number> = {},
   frozenExpressions: Record<string, number> = {},
   skin?: SkinMaterialSettings,
+  options: AnimatedGlbOptions = { avatarKind: "gnm" },
 ) {
   if (!frames.length) throw new Error("No motion frames were recorded.");
-  const response = await fetch(assetUrl("models/gnm_head_runtime.glb"));
+  const profile = avatarProfiles[options.avatarKind];
+  const response = await fetch(assetUrl(profile.asset));
+  if (!response.ok) throw new Error(`Could not load ${profile.label} (${response.status}).`);
   const source = await response.arrayBuffer();
   const gltf = await new GLTFLoader().parseAsync(source, "");
   const meshes: THREE.Mesh[] = [];
@@ -27,10 +51,11 @@ export async function createAnimatedGlb(
     if (object instanceof THREE.Mesh && object.morphTargetDictionary) meshes.push(object);
   });
   const mesh = meshes[0];
-  if (!mesh) throw new Error("The GNM runtime mesh did not contain morph targets.");
+  if (!mesh) throw new Error(`${profile.label} did not contain a morphable head mesh.`);
 
-  mesh.name = "GNM_Head_v3";
-  if (identityVertices?.length) {
+  const meshName = options.avatarKind === "facecap" ? "FaceCap_Head" : "GNM_Head_v3";
+  mesh.name = meshName;
+  if (options.avatarKind === "gnm" && identityVertices?.length) {
     const positions = new Float32Array(identityVertices.length * 3);
     identityVertices.forEach((vertex, index) => {
       positions[index * 3] = vertex[0];
@@ -42,12 +67,14 @@ export async function createAnimatedGlb(
   }
 
   let skinTextures: SkinTextureSet | null = null;
+  const createdMaterials: THREE.Material[] = [];
   const material = new THREE.MeshPhysicalMaterial({
     color: skin ? skinToneColor(skin.tone) : 0xd8dde5,
     roughness: 0.48,
     metalness: 0.02,
     side: THREE.DoubleSide,
   });
+  createdMaterials.push(material);
   if (skin?.enabled) {
     skinTextures = await loadSkinTextureSet(skin.tone, skin.feather);
     configureSkinTextureSet(skinTextures, skin.scale, skin.rotation);
@@ -66,23 +93,43 @@ export async function createAnimatedGlb(
     material.specularIntensity = 0.55;
     material.roughness = 0.54;
   }
-  mesh.material = material;
+  if (options.avatarKind === "facecap") {
+    const tongueMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xb45f68,
+      roughness: 0.58,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    });
+    createdMaterials.push(tongueMaterial);
+    splitFacecapTongueMaterial(mesh, material, tongueMaterial);
+  } else {
+    mesh.material = material;
+  }
 
   const performanceRoot = new THREE.Group();
-  performanceRoot.name = "GNM_Performance";
+  performanceRoot.name = "GNM_Studio_Performance";
   performanceRoot.add(gltf.scene);
   const exportScene = new THREE.Scene();
   exportScene.name = "GNM_Studio_Capture";
   exportScene.add(performanceRoot);
   const times = new Float32Array(frames.map((frame) => frame.timestamp / 1000));
-  const values = new Float32Array(frames.length * runtimeMorphNames.length);
+  const morphNames = options.avatarKind === "facecap" ? facecapTargetNames : gnmMorphNames;
+  const values = new Float32Array(frames.length * morphNames.length);
   frames.forEach((frame, frameIndex) => {
+    if (options.avatarKind === "facecap") {
+      const influences = facecapInfluences(frame.blendshapes);
+      facecapTargetNames.forEach((name, targetIndex) => {
+        values[frameIndex * morphNames.length + targetIndex] =
+          frozenExpressions[name] ?? Math.min(1, influences[name] + (manualExpressions[name] ?? 0));
+      });
+      return;
+    }
     const semantic = semanticInfluences(frame.blendshapes);
     semanticExpressionNames.forEach((name, targetIndex) => {
-      values[frameIndex * runtimeMorphNames.length + targetIndex] =
+      values[frameIndex * morphNames.length + targetIndex] =
         frozenExpressions[name] ?? Math.min(1, semantic[name] + (manualExpressions[name] ?? 0));
     });
-    values[frameIndex * runtimeMorphNames.length + semanticExpressionNames.length] =
+    values[frameIndex * morphNames.length + semanticExpressionNames.length] =
       frozenExpressions.surprise ?? Math.min(
         1,
         mouthOpenInfluence(frame.blendshapes) + (manualExpressions.surprise ?? 0),
@@ -91,28 +138,34 @@ export async function createAnimatedGlb(
 
   const tracks: THREE.KeyframeTrack[] = [
     new THREE.NumberKeyframeTrack(
-      "GNM_Head_v3.morphTargetInfluences",
+      `${meshName}.morphTargetInfluences`,
       times,
       values,
       THREE.InterpolateLinear,
     ),
   ];
   const quaternionValues = new Float32Array(frames.length * 4);
+  let previousQuaternion: THREE.Quaternion | null = null;
   frames.forEach((frame, index) => {
-    const quaternion = new THREE.Quaternion();
-    if (frame.matrix.length === 16) {
-      const matrix = new THREE.Matrix4().fromArray(frame.matrix);
-      const ignoredPosition = new THREE.Vector3();
-      const ignoredScale = new THREE.Vector3();
-      matrix.decompose(ignoredPosition, quaternion, ignoredScale);
-      const sourceEuler = new THREE.Euler().setFromQuaternion(quaternion, "XYZ");
-      quaternion.setFromEuler(new THREE.Euler(-sourceEuler.x, sourceEuler.y, sourceEuler.z, "XYZ"));
-    }
+    const trackingFrame: TrackingFrame = {
+      timestamp: frame.timestamp,
+      landmarks: [],
+      blendshapes: [],
+      matrix: frame.matrix,
+    };
+    const quaternion = resolveHeadPose(
+      trackingFrame,
+      options.neutralFrame ?? null,
+      options.mirror ?? false,
+      options.headPose ?? defaultHeadPose,
+      previousQuaternion,
+    );
+    previousQuaternion = quaternion;
     quaternion.toArray(quaternionValues, index * 4);
   });
-  tracks.push(new THREE.QuaternionKeyframeTrack("GNM_Performance.quaternion", times, quaternionValues));
+  tracks.push(new THREE.QuaternionKeyframeTrack("GNM_Studio_Performance.quaternion", times, quaternionValues));
 
-  const clip = new THREE.AnimationClip("GNM Capture", -1, tracks);
+  const clip = new THREE.AnimationClip(`${profile.shortLabel} Capture`, -1, tracks);
   const exporter = new GLTFExporter();
   try {
     const exported = await exporter.parseAsync(exportScene, {
@@ -125,6 +178,6 @@ export async function createAnimatedGlb(
     return new Uint8Array(exported);
   } finally {
     disposeSkinTextureSet(skinTextures);
-    material.dispose();
+    createdMaterials.forEach((entry) => entry.dispose());
   }
 }

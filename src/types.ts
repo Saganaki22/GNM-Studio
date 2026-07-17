@@ -30,10 +30,11 @@ export type DeviceOption = {
 };
 
 export type RecordingMode = "motion" | "avatar" | "composite";
+export type AvatarKind = "gnm" | "facecap";
 export type BackgroundMode = "studio" | "solid" | "image" | "transparent";
 export type TrackingBackend = "auto" | "gpu" | "cpu";
 export type VideoEncoderBackend = "auto" | "webcodecs" | "ffmpeg";
-export type SkinTone = "light" | "warm" | "medium" | "deep" | "rich";
+export type SkinTone = "neutral" | "light" | "warm" | "medium" | "deep" | "rich";
 
 export type SkinMaterialSettings = {
   enabled: boolean;
@@ -43,7 +44,17 @@ export type SkinMaterialSettings = {
   feather: number;
 };
 
+export type HeadPoseSettings = {
+  enabled: boolean;
+  yawStrength: number;
+  pitchStrength: number;
+  rollStrength: number;
+  deadZone: number;
+  smoothing: number;
+};
+
 export type AppSettings = {
+  avatarKind: AvatarKind;
   cameraId: string;
   microphoneId: string;
   cameraFps: number;
@@ -75,5 +86,14 @@ export type AppSettings = {
   backgroundImageZoom: number;
   mouseLightEnabled: boolean;
   mouseLightIntensity: number;
+  headRotationEnabled: boolean;
+  headYawStrength: number;
+  headPitchStrength: number;
+  headRollStrength: number;
+  headRotationDeadZone: number;
+  headRotationSmoothing: number;
+  outputAutoHideEnabled: boolean;
+  outputAutoHideDelay: number;
+  outputAlwaysHideControls: boolean;
   recordingMode: RecordingMode;
 };
