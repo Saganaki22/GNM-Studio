@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.1.0-54ddb2" alt="Release v1.1.0"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.1.1-54ddb2" alt="Release v1.1.1"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages web edition"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 and React">
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/e1449cad-ea74-4912-b77a-a0effe41c102
 
 Author: [Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.1.0` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
+GNM Studio `1.1.1` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
 Three.js, Rust, and Tauri in a portable Windows application, with a companion
 GitHub Pages edition for trying the tracking and animation workflow online. It
 can drive a head from a webcam, record facial motion and video, and export
@@ -40,7 +40,7 @@ downloads. The desktop edition also provides native seeded identity generation.
 1. Download the latest Windows x64 archive from
    [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases).
 2. Extract it to a writable folder such as `C:\AI\GNM-Studio\`.
-3. Run `GNM-Studio-v1.1.0.exe`.
+3. Run `GNM-Studio-v1.1.1.exe`.
 4. Approve camera and/or microphone access if you want live capture, or choose
    **Continue without capture** for manual avatar work.
 5. For tracked performances, hold a neutral expression and use **Calibrate neutral**.
@@ -49,8 +49,8 @@ Two portable archives may be published:
 
 | Package | Use it when |
 | --- | --- |
-| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.0/GNM-Studio-1.1.0-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
-| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.0/GNM-Studio-1.1.0-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
+| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.1/GNM-Studio-1.1.1-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
+| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.1/GNM-Studio-1.1.1-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
 
 The application and all model assets are embedded. No installer is required.
 
@@ -68,6 +68,10 @@ export, and browser-based MP4/WebM saving. Browser codec support determines MP4
 availability. Native seeded identity evaluation and system FFmpeg are desktop
 only because they use the Rust/Tauri process.
 
+The hosted interface is phone- and tablet-responsive: the live viewport stays
+first, while model, capture, layer, material, recording, and export controls
+remain available below it with touch-sized controls and horizontal tool strips.
+
 The project is deliberately built with the `/GNM-Studio/` base path so it works
 below the existing custom-domain root. This project does not publish a `CNAME`
 file because `drbaph.is-a.dev` belongs to the parent Pages site, while this app
@@ -78,8 +82,9 @@ lives at its `GNM-Studio` subpath.
 - Native Google GNM Head v3 mesh with 17,821 vertices and 35,324 triangles.
 - Offline MIT FaceCap avatar with all 52 MediaPipe/ARKit-style morph targets,
   including direct jaw, gaze, cheek, lip, and tongue controls.
-- Persistent avatar switching: GNM keeps its semantic/native identity workflow,
-  while FaceCap exposes grouped 52-channel sliders and independent freeze locks.
+- A persistent card-based mocap model picker: GNM keeps its semantic/native
+  identity workflow, while FaceCap exposes grouped 52-channel sliders and
+  independent freeze locks.
 - Seeded identity creation with presentation and population blending controls.
 - MediaPipe webcam tracking with 478 face landmarks, 52 tracking blendshapes,
   a facial transformation matrix, GPU-first execution, and CPU fallback.
@@ -102,8 +107,9 @@ lives at its `GNM-Studio` subpath.
 - Blender-style orbit, pan, wheel zoom, cardinal views that preserve framing,
   and a separate full reset view.
 - True fullscreen canvas output with configurable control auto-hide and `H`,
-  plus a canvas-only OBS popout that becomes the sole renderer and restores the
-  studio canvas automatically when it closes.
+  plus a canvas-only OBS popout that becomes the sole renderer, mirrors the
+  selected webcam/avatar/landmark/background layers without render flashing,
+  and restores the studio canvas automatically when it closes.
 - Experimental repeated PBR skin material, off and collapsed by default, with
   a no-tint white neutral option plus five base tones, aligned colour/normal/displacement/occlusion/specular maps,
   scale/rotation controls, adjustable seam feathering, and flicker-free live updates.
@@ -131,6 +137,7 @@ are bundled into the release executable:
 - Google GNM Head v3 NPZ data.
 - Runtime GNM GLB and semantic identity/expression decoders.
 - The pinned Three.js r184 FaceCap 52 GLB avatar.
+- Three.js Basis Universal/KTX2 transcoder assets for FaceCap's offline textures.
 - A procedural neutral/no-tint skin map, five local skin-tone variants, and their shared PBR detail maps.
 - Local WebCodecs MP4 muxing and AAC fallback encoder code.
 - The complete Tauri/Vite frontend.
@@ -186,7 +193,7 @@ included in video modes unless muted.
 | WebM source | Optional unconverted source when WebView2 recorded WebM internally | Diagnostics or archival |
 
 For Blender, animated GLB is the recommended editable export. Import it with
-**File → Import → glTF 2.0**. Alembic export is not part of `1.1.0`.
+**File → Import → glTF 2.0**. Alembic export is not part of `1.1.1`.
 Export defaults include local date and time down to seconds, for example
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`.
 

@@ -507,6 +507,7 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.accent = accent;
+    document.documentElement.dataset.edition = isWebEdition ? "web" : "desktop";
     document.documentElement.style.colorScheme = theme;
     localStorage.setItem("gnm-studio-theme", theme);
     localStorage.setItem("gnm-studio-accent", accent);
@@ -1938,7 +1939,7 @@ function App() {
   return (
     <>
     <main
-      className={`app-shell ${recordingState === "recording" ? "is-recording" : ""} ${fullscreen ? "viewport-focus" : ""} ${outputControlsHidden ? "output-controls-hidden" : ""}`}
+      className={`app-shell ${isWebEdition ? "web-edition" : "desktop-edition"} ${recordingState === "recording" ? "is-recording" : ""} ${fullscreen ? "viewport-focus" : ""} ${outputControlsHidden ? "output-controls-hidden" : ""}`}
       style={{ "--ui-scale": (uiScale / 100).toFixed(2) } as React.CSSProperties}
       onPointerMove={fullscreen ? scheduleOutputControls : undefined}
     >
@@ -1984,25 +1985,36 @@ function App() {
         </div>
         {activePanel === "avatar" ? (
           <>
-            <section className="panel-section hero-card model-picker">
-              <div className="avatar-orb"><Box size={28} /></div>
-              <div>
-                <span>Active model</span>
-                <select
-                  aria-label="Mocap avatar model"
-                  value={settings.avatarKind}
-                  onChange={(event) => {
-                    const avatarKind = event.target.value as AvatarKind;
-                    updateSetting("avatarKind", avatarKind);
-                    pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: avatarKind === "facecap" ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." });
-                  }}
-                >
-                  <option value="gnm">GNM Head v3</option>
-                  <option value="facecap">FaceCap 52 · MIT</option>
-                </select>
-                <small>{settings.avatarKind === "gnm" ? `${(gnmInfo?.vertices ?? 17_821).toLocaleString()} vertices · ${(gnmInfo?.identityDimensions ?? 253) + (gnmInfo?.expressionDimensions ?? 383)} native controls` : "52 direct MediaPipe/ARKit morph targets"}</small>
+            <section className="panel-section model-picker">
+              <div className="section-heading"><span>Mocap model</span><small>Local avatars</small></div>
+              <div className="model-choice-list" role="radiogroup" aria-label="Mocap avatar model">
+                {(["gnm", "facecap"] as AvatarKind[]).map((avatarKind) => {
+                  const selected = settings.avatarKind === avatarKind;
+                  const facecap = avatarKind === "facecap";
+                  return (
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      className={`model-choice-card ${selected ? "active" : ""}`}
+                      key={avatarKind}
+                      onClick={() => {
+                        if (selected) return;
+                        updateSetting("avatarKind", avatarKind);
+                        pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: facecap ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." });
+                      }}
+                    >
+                      <span className="model-choice-icon">{facecap ? <Aperture size={20} /> : <Box size={20} />}</span>
+                      <span className="model-choice-copy">
+                        <strong>{facecap ? "FaceCap 52" : "GNM Head v3"}</strong>
+                        <small>{facecap ? "Direct 52-channel tracking" : "Seeded identity + semantic controls"}</small>
+                      </span>
+                      <span className="model-choice-meta"><em>{facecap ? "MIT" : "GNM"}</em>{selected && <Check size={15} />}</span>
+                    </button>
+                  );
+                })}
               </div>
-              <ChevronDown size={17} />
+              <p className="model-choice-detail">{settings.avatarKind === "gnm" ? `${(gnmInfo?.vertices ?? 17_821).toLocaleString()} vertices · ${(gnmInfo?.identityDimensions ?? 253) + (gnmInfo?.expressionDimensions ?? 383)} native controls` : "52 MediaPipe/ARKit morph targets · bundled offline KTX2 materials"}</p>
             </section>
             <section className="panel-section" data-workspace-target="create"><div className="section-heading"><span>Identity</span><button onClick={randomizeIdentity} disabled={identityControlsDisabled || identityStatus === "generating"}><RefreshCw size={14} />{identityStatus === "generating" ? "Generating" : "Randomize"}</button></div><label className="field-label">Seed<input className="text-input" value={identitySeed} disabled={identityControlsDisabled} onChange={(event) => setIdentitySeed(event.target.value)} onBlur={() => { if (!identityControlsDisabled) void generateIdentity(); }} /></label><div className="two-up"><label className="field-label">Presentation<select value={identityGender} disabled={identityControlsDisabled} onChange={(event) => setIdentityGender(event.target.value as typeof identityGender)}><option value="blend">Blend</option><option value="female">Feminine</option><option value="male">Masculine</option></select></label><label className="field-label">Population<select value={identityEthnicity} disabled={identityControlsDisabled} onChange={(event) => setIdentityEthnicity(event.target.value as typeof identityEthnicity)}><option value="blend">Blend</option><option value="asian">Asian</option><option value="black">Black</option><option value="middle_eastern">Middle Eastern</option><option value="white">White</option></select></label></div><button className="secondary-button wide" onClick={() => void generateIdentity()} disabled={identityControlsDisabled || identityStatus === "generating"}>{!activeProfile.supportsIdentity ? "FaceCap uses its supplied identity" : isWebEdition ? "Desktop-only identity generator" : identityStatus === "generating" ? "Building GNM mesh…" : "Apply identity"}</button>{identityControlsDisabled && <p className="helper-copy web-edition-note">{!activeProfile.supportsIdentity ? "FaceCap has a fixed supplied identity; all 52 expressions, tracking, material and export tools remain available." : "The native seeded identity evaluator is desktop-only. Online you can track and animate the base GNM head, use every expression/material control, record, and export."}</p>}</section>
             <details className="panel-section experimental-skin">

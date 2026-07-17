@@ -96,7 +96,20 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [ ] Validate both exported avatars in Blender, including pose, jaw, tongue, timing, and PBR materials.
 - [x] Update permissions, third-party notices, English/Chinese READMEs, CI, Pages, and portable packaging.
 - [x] Bump all manifests and portable packaging defaults to 1.1.0 at feature freeze.
-- [ ] Build, tag, and publish the v1.1.0 release after validation.
+- [x] Build, tag, and publish the v1.1.0 release after validation.
+
+## Version 1.1.1 hotfix
+
+- [x] Stop the popout Stage from rebuilding on every tracking frame.
+- [x] Keep live face/head motion flowing to the popout renderer.
+- [x] Mirror the selected webcam, avatar, landmark, background, material, and display layers in the popout.
+- [x] Acquire the selected camera in the output window only when its Webcam layer is enabled.
+- [x] Attach an offline Basis/KTX2 transcoder before loading or exporting FaceCap textures.
+- [x] Validate the FaceCap `KHR_texture_basisu` requirement and hosted transcoder artifacts in CI.
+- [x] Replace the basic model dropdown with an accessible card-based GNM/FaceCap picker.
+- [x] Add a scoped phone/tablet layout to the web edition without changing desktop window behavior.
+- [x] Run frontend, web, Rust, portable package, and launch-smoke validation.
+- [x] Tag and publish v1.1.1, update `webapp-src`, and verify GitHub Actions and Pages.
 
 ## Remaining production work
 

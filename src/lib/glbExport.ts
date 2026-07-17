@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { createKtx2Loader } from "./ktx2";
 import type {
   AvatarKind, HeadPoseSettings, RecordedFrame, SkinMaterialSettings, TrackingFrame,
 } from "../types";
@@ -22,6 +23,22 @@ export type AnimatedGlbOptions = {
   mirror?: boolean;
   headPose?: HeadPoseSettings;
 };
+
+async function loadAvatarSource(source: ArrayBuffer, avatarKind: AvatarKind) {
+  const loader = new GLTFLoader();
+  if (avatarKind !== "facecap") return loader.parseAsync(source, "");
+
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
+  const ktx2Loader = createKtx2Loader(renderer);
+  loader.setKTX2Loader(ktx2Loader);
+  try {
+    return await loader.parseAsync(source, "");
+  } finally {
+    ktx2Loader.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss();
+  }
+}
 
 const defaultHeadPose: HeadPoseSettings = {
   enabled: true,
@@ -45,7 +62,7 @@ export async function createAnimatedGlb(
   const response = await fetch(assetUrl(profile.asset));
   if (!response.ok) throw new Error(`Could not load ${profile.label} (${response.status}).`);
   const source = await response.arrayBuffer();
-  const gltf = await new GLTFLoader().parseAsync(source, "");
+  const gltf = await loadAvatarSource(source, options.avatarKind);
   const meshes: THREE.Mesh[] = [];
   gltf.scene.traverse((object) => {
     if (object instanceof THREE.Mesh && object.morphTargetDictionary) meshes.push(object);

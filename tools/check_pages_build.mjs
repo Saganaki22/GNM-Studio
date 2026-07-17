@@ -19,6 +19,13 @@ for (const path of required) {
   if (!existsSync(join(rootPath, path))) throw new Error(`GitHub Pages build is missing ${path}`);
 }
 
+const assetNames = readdirSync(join(rootPath, "assets"));
+for (const extension of [".js", ".wasm"]) {
+  if (!assetNames.some((name) => name.startsWith("basis_transcoder-") && name.endsWith(extension))) {
+    throw new Error(`GitHub Pages build is missing its bundled Basis/KTX2 transcoder ${extension} asset`);
+  }
+}
+
 const index = readFileSync(join(rootPath, "index.html"), "utf8");
 if (!index.includes("/GNM-Studio/")) throw new Error("index.html is not using the /GNM-Studio/ project base path");
 if (/\b(?:src|href)=["']\/(?!GNM-Studio\/)/.test(index)) {
@@ -46,4 +53,4 @@ for (const path of textFiles) {
   }
 }
 
-console.log(`GitHub Pages build verified: ${textFiles.length} text bundles and ${required.length} required assets.`);
+console.log(`GitHub Pages build verified: ${textFiles.length} text bundles, ${required.length} required assets, and offline Basis/KTX2 transcoder.`);

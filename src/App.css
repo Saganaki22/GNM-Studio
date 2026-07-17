@@ -84,8 +84,21 @@
 .hero-card > div:nth-child(2) { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .hero-card span, .hero-card small { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 .hero-card strong { margin: 3px 0; font-size: 12px; }
-.model-picker select { width: 100%; min-width: 0; margin: 2px 0 4px; padding: 0 23px 0 0; border: 0; outline: 0; appearance: none; background: transparent; color: var(--text); font-size: 12px; font-weight: 700; cursor: pointer; }
-.model-picker > svg { pointer-events: none; color: var(--muted); }
+.model-picker { padding-bottom: 13px; }
+.model-picker .section-heading { margin-bottom: 9px; }
+.model-choice-list { display: grid; gap: 7px; }
+.model-choice-card { width: 100%; min-width: 0; padding: 9px; display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(135deg, var(--surface-2), rgba(12,17,24,.86)); color: var(--text); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease, box-shadow .16s ease; }
+.model-choice-card:hover { transform: translateY(-1px); border-color: rgb(var(--accent-rgb) / .35); background: linear-gradient(135deg, var(--surface-3), rgb(var(--accent-rgb) / .05)); }
+.model-choice-card.active { border-color: rgb(var(--accent-rgb) / .58); background: linear-gradient(135deg, rgb(var(--accent-rgb) / .14), rgb(var(--accent-rgb) / .045)); box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / .1), 0 7px 18px rgb(var(--accent-rgb) / .08); }
+.model-choice-icon { width: 35px; height: 35px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: rgba(4,8,12,.5); color: var(--muted-2); }
+.model-choice-card.active .model-choice-icon { border-color: rgb(var(--accent-rgb) / .34); color: var(--accent); background: rgb(var(--accent-rgb) / .08); }
+.model-choice-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.model-choice-copy strong { overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.model-choice-copy small { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.model-choice-meta { min-width: 24px; align-self: stretch; display: flex; flex-direction: column; align-items: flex-end; justify-content: space-between; color: var(--accent); }
+.model-choice-meta em { padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font: normal 700 7px "DM Mono", monospace; letter-spacing: .06em; }
+.model-choice-card.active .model-choice-meta em { border-color: rgb(var(--accent-rgb) / .28); color: var(--accent); background: rgb(var(--accent-rgb) / .07); }
+.model-choice-detail { margin: 8px 1px 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .avatar-orb { width: 40px; height: 40px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #74869a, #222b37 55%, #10151c); color: #d8e2ef; box-shadow: 0 7px 20px rgba(0,0,0,.35); }
 
 .section-heading { display: flex; align-items: center; min-height: 22px; margin-bottom: 12px; }
@@ -501,6 +514,67 @@ select option { background: var(--surface-2); color: var(--text); }
   .timecode span { display: none; }
   .return-live span { display: none; }
   .return-live { width: 32px; padding: 0; }
+
+  /* The hosted edition remains fully usable on phones. Desktop keeps its
+     compact narrow-window layout so resizing a Tauri window is unchanged. */
+  .app-shell.web-edition {
+    width: 100vw;
+    height: 100dvh;
+    transform: none;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 54px minmax(360px, 62dvh) auto auto auto;
+    grid-template-areas: "top" "view" "left" "right" "dock";
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--bg);
+  }
+  .app-shell.web-edition .topbar { position: sticky; top: 0; min-width: 0; padding-inline: 8px; }
+  .app-shell.web-edition .brand { width: 38px; flex: 0 0 38px; gap: 0; }
+  .app-shell.web-edition .brand > div,
+  .app-shell.web-edition .edition-badge { display: none; }
+  .app-shell.web-edition .workspace-tabs { min-width: 0; flex: 1; display: flex; overflow-x: auto; scrollbar-width: none; }
+  .app-shell.web-edition .workspace-tabs::-webkit-scrollbar { display: none; }
+  .app-shell.web-edition .workspace-tabs button,
+  .app-shell.web-edition .workspace-tabs button:not(.active) { display: block; flex: 1 0 auto; min-width: 57px; min-height: 44px; padding-inline: 8px; }
+  .app-shell.web-edition .workspace-tabs button.active::after { left: 8px; right: 8px; }
+  .app-shell.web-edition .system-status { margin-left: 4px; gap: 3px; }
+  .app-shell.web-edition .backend-status { width: 30px; padding: 0; justify-content: center; overflow: hidden; font-size: 0; }
+  .app-shell.web-edition .backend-status i { flex: 0 0 auto; }
+  .app-shell.web-edition .topbar > .icon-button { flex: 0 0 auto; }
+  .app-shell.web-edition .viewport-column { min-height: 360px; }
+  .app-shell.web-edition .viewport-toolbar { min-height: 46px; height: auto; overflow-x: auto; scrollbar-width: none; }
+  .app-shell.web-edition .viewport-toolbar::-webkit-scrollbar { display: none; }
+  .app-shell.web-edition .segmented,
+  .app-shell.web-edition .toolbar-actions { flex: 0 0 auto; }
+  .app-shell.web-edition .left-sidebar,
+  .app-shell.web-edition .right-sidebar { display: block; min-height: auto; overflow: visible; border: 0; border-top: 1px solid var(--line); }
+  .app-shell.web-edition .sidebar-tabs { position: sticky; top: 54px; }
+  .app-shell.web-edition .sidebar-tabs button,
+  .app-shell.web-edition .model-choice-card,
+  .app-shell.web-edition .toggle-row { min-height: 44px; }
+  .app-shell.web-edition .transport-dock { min-width: 0; padding-bottom: env(safe-area-inset-bottom); grid-template-rows: auto auto; }
+  .app-shell.web-edition .audio-strip { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 11px; }
+  .app-shell.web-edition .meter-wrap { grid-column: 1 / -1; grid-row: auto; }
+  .app-shell.web-edition .transport { grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 11px; }
+  .app-shell.web-edition .transport-main { margin-top: 0; flex-wrap: wrap; }
+  .app-shell.web-edition .timeline { margin-top: 0; }
+  .app-shell.web-edition .export-cluster { min-width: 0; justify-content: flex-start; align-items: end; overflow-x: auto; padding-bottom: 3px; scrollbar-width: thin; }
+  .app-shell.web-edition .export-cluster > button { width: auto; min-width: 40px; min-height: 40px; }
+  .app-shell.web-edition .export-cluster > button > span { display: inline; }
+  .app-shell.web-edition .fps-control.compact { flex: 0 0 132px; }
+  [data-edition="web"] .settings-popover { right: 8px; top: 60px; width: calc(100vw - 16px); max-height: calc(100dvh - 68px); }
+  [data-edition="web"] .toast-center { right: 8px; top: 62px; width: calc(100vw - 16px); }
+  .app-shell.web-edition .permission-card { top: 55%; }
+}
+
+@media (max-width: 420px) {
+  .app-shell.web-edition .workspace-tabs button,
+  .app-shell.web-edition .workspace-tabs button:not(.active) { min-width: 51px; padding-inline: 5px; font-size: 9px; }
+  .app-shell.web-edition .view-gizmo { right: 7px; bottom: 7px; transform: scale(.82); transform-origin: bottom right; }
+  .app-shell.web-edition .view-help { display: none; }
+  .app-shell.web-edition .permission-card { grid-template-columns: 1fr; text-align: center; }
+  .app-shell.web-edition .permission-card > svg { margin-inline: auto; }
 }
 
 .app-shell.viewport-focus {

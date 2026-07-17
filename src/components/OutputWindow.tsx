@@ -22,12 +22,20 @@ export function OutputWindow() {
   const channelRef = useRef<BroadcastChannel | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderStreamRef = useRef<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const snapshotRef = useRef<OutputSnapshot | null>(null);
 
   snapshotRef.current = snapshot;
 
   const post = useCallback((message: OutputToMainMessage) => channelRef.current?.postMessage(message), []);
+  const handleCompositeCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
+    canvasRef.current = canvas;
+  }, []);
+  const handleSkinMaterialError = useCallback((message: string) => {
+    setError(message);
+    post({ type: "error", operation: "Popout material", message });
+  }, [post]);
 
   const stopRecorderTracks = () => {
     recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -123,10 +131,61 @@ export function OutputWindow() {
       window.removeEventListener("beforeunload", closing);
       window.clearInterval(heartbeat);
       stopRecorderTracks();
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
       channel.close();
       channelRef.current = null;
     };
   }, [post, startRecording]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const webcamEnabled = snapshot?.settings.showWebcam ?? false;
+    if (!video || !webcamEnabled || !navigator.mediaDevices?.getUserMedia) {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+      if (video) video.srcObject = null;
+      return;
+    }
+
+    let cancelled = false;
+    const cameraId = snapshot?.settings.cameraId ?? "";
+    const cameraFps = snapshot?.settings.cameraFps ?? 30;
+    navigator.mediaDevices.getUserMedia({
+      video: {
+        ...(cameraId ? { deviceId: { exact: cameraId } } : {}),
+        frameRate: { ideal: cameraFps },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    }).then((stream) => {
+      if (cancelled) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = stream;
+      video.srcObject = stream;
+      void video.play().catch((playError) => {
+        const message = `Could not start the selected camera layer: ${String(playError)}`;
+        setError(message);
+        post({ type: "error", operation: "Popout camera", message });
+      });
+    }).catch((cameraError) => {
+      if (cancelled) return;
+      const message = `Could not mirror the selected camera in the popout: ${String(cameraError)}`;
+      setError(message);
+      post({ type: "error", operation: "Popout camera", message });
+    });
+
+    return () => {
+      cancelled = true;
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+      video.srcObject = null;
+    };
+  }, [post, snapshot?.settings.cameraFps, snapshot?.settings.cameraId, snapshot?.settings.showWebcam]);
 
   useEffect(() => {
     const suppressContextMenu = (event: MouseEvent) => event.preventDefault();
@@ -143,9 +202,9 @@ export function OutputWindow() {
         videoRef={videoRef}
         frame={frame}
         neutralFrame={snapshot.neutralFrame}
-        showWebcam={false}
+        showWebcam={settings.showWebcam}
         showAvatar={settings.showAvatar}
-        showLandmarks={false}
+        showLandmarks={settings.showLandmarks}
         mirror={settings.mirror}
         opacity={settings.avatarOpacity}
         wireframe={settings.wireframe}
@@ -156,7 +215,7 @@ export function OutputWindow() {
         skinTextureFeather={settings.skinTextureFeather}
         backgroundMode={settings.backgroundMode}
         backgroundColor={settings.backgroundColor}
-        backgroundImageUrl={snapshot.backgroundImageUrl ?? backgroundImageUrl}
+        backgroundImageUrl={backgroundImageUrl ?? snapshot.backgroundImageUrl}
         backgroundImageZoom={settings.backgroundImageZoom}
         mouseLightEnabled={settings.mouseLightEnabled}
         mouseLightIntensity={settings.mouseLightIntensity}
@@ -180,8 +239,8 @@ export function OutputWindow() {
         recordingActive={snapshot.recordingActive}
         resetViewSignal={snapshot.resetViewSignal}
         onCancelCalibration={() => undefined}
-        onCompositeCanvas={(canvas) => { canvasRef.current = canvas; }}
-        onSkinMaterialError={(message) => { setError(message); post({ type: "error", operation: "Popout material", message }); }}
+        onCompositeCanvas={handleCompositeCanvas}
+        onSkinMaterialError={handleSkinMaterialError}
       />
       {error && <div className="output-error">{error}</div>}
     </main>

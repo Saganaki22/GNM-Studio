@@ -10,6 +10,9 @@ const jsonLength = source.readUInt32LE(12);
 const jsonType = source.toString("ascii", 16, 20);
 if (jsonType !== "JSON") throw new Error("facecap.glb does not begin with a JSON chunk");
 const gltf = JSON.parse(source.toString("utf8", 20, 20 + jsonLength).trim());
+if (!gltf.extensionsUsed?.includes("KHR_texture_basisu")) {
+  throw new Error("facecap.glb no longer declares its required KHR_texture_basisu textures");
+}
 
 const expectedTargets = [
   "browInnerUp", "browDown_L", "browDown_R", "browOuterUp_L", "browOuterUp_R",
@@ -37,4 +40,4 @@ const nodeNames = new Set(gltf.nodes.map((node) => node.name));
 for (const name of ["head", "teeth", "eyeLeft", "eyeRight"]) {
   if (!nodeNames.has(name)) throw new Error(`facecap.glb is missing required node ${name}`);
 }
-console.log(`FaceCap asset verified: ${source.length.toLocaleString()} bytes, 52 named morphs, UV/PBR-ready, separate eyes and teeth.`);
+console.log(`FaceCap asset verified: ${source.length.toLocaleString()} bytes, 52 named morphs, KTX2/PBR-ready, separate eyes and teeth.`);

@@ -7,6 +7,7 @@ import { mouthOpenInfluence, semanticInfluences } from "../lib/retarget";
 import { avatarProfiles, facecapInfluences } from "../lib/avatarProfiles";
 import { resolveHeadPose } from "../lib/headPose";
 import { splitFacecapTongueMaterial } from "../lib/facecapModel";
+import { createKtx2Loader } from "../lib/ktx2";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   type SkinTextureSet,
@@ -288,7 +289,9 @@ export function Stage({
     observer.observe(host);
     resize();
 
+    const ktx2Loader = avatarKind === "facecap" ? createKtx2Loader(renderer) : null;
     const loader = new GLTFLoader();
+    if (ktx2Loader) loader.setKTX2Loader(ktx2Loader);
     const installModel = (gltf: Awaited<ReturnType<GLTFLoader["loadAsync"]>>) => {
       // FaceCap's head, teeth and eyes are sibling scene nodes. GNM ships
       // beneath one root node, so preserve its existing hierarchy there.
@@ -430,6 +433,7 @@ export function Stage({
       controls.dispose();
       controlsRef.current = null;
       mouseLightRef.current = null;
+      ktx2Loader?.dispose();
       renderer.dispose();
       scene.traverse((object) => {
         if (!(object instanceof THREE.Mesh)) return;
