@@ -1,17 +1,22 @@
 import * as THREE from "three";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { createKtx2Loader } from "./ktx2";
+import { configureFacecapLoader } from "./ktx2";
+import { flattenIdentityVertices } from "./identityVertices";
 import type {
-  AvatarKind, HeadPoseSettings, RecordedFrame, SkinMaterialSettings, TrackingFrame,
+  AvatarKind, HeadPoseSettings, IdentityVertices, RecordedFrame, SkinMaterialSettings, TrackingFrame,
 } from "../types";
 import { mouthOpenInfluence, semanticExpressionNames, semanticInfluences } from "./retarget";
 import { assetUrl } from "./assets";
 import { avatarProfiles, facecapInfluences, facecapTargetNames } from "./avatarProfiles";
 import { resolveHeadPose } from "./headPose";
-import { splitFacecapTongueMaterial } from "./facecapModel";
+import {
+  createFacecapMouthMaterials, normalizeFacecapSkinUvs, splitFacecapMouthMaterials,
+} from "./facecapModel";
+import { disposeGnmEyeMaterials, installGnmEyeMaterials, type GnmEyeMaterialSet } from "./gnmEyes";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
+  skinDisplacementScale,
   type SkinTextureSet,
 } from "./skinMaterial";
 
@@ -29,8 +34,7 @@ async function loadAvatarSource(source: ArrayBuffer, avatarKind: AvatarKind) {
   if (avatarKind !== "facecap") return loader.parseAsync(source, "");
 
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false });
-  const ktx2Loader = createKtx2Loader(renderer);
-  loader.setKTX2Loader(ktx2Loader);
+  const ktx2Loader = configureFacecapLoader(loader, renderer);
   try {
     return await loader.parseAsync(source, "");
   } finally {
@@ -51,7 +55,7 @@ const defaultHeadPose: HeadPoseSettings = {
 
 export async function createAnimatedGlb(
   frames: RecordedFrame[],
-  identityVertices?: number[][] | null,
+  identityVertices?: IdentityVertices | null,
   manualExpressions: Record<string, number> = {},
   frozenExpressions: Record<string, number> = {},
   skin?: SkinMaterialSettings,
@@ -72,18 +76,15 @@ export async function createAnimatedGlb(
 
   const meshName = options.avatarKind === "facecap" ? "FaceCap_Head" : "GNM_Head_v3";
   mesh.name = meshName;
+  if (options.avatarKind === "facecap") normalizeFacecapSkinUvs(mesh);
   if (options.avatarKind === "gnm" && identityVertices?.length) {
-    const positions = new Float32Array(identityVertices.length * 3);
-    identityVertices.forEach((vertex, index) => {
-      positions[index * 3] = vertex[0];
-      positions[index * 3 + 1] = vertex[1];
-      positions[index * 3 + 2] = vertex[2];
-    });
+    const positions = flattenIdentityVertices(identityVertices);
     mesh.geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     mesh.geometry.computeVertexNormals();
   }
 
   let skinTextures: SkinTextureSet | null = null;
+  let gnmEyeMaterials: GnmEyeMaterialSet | null = null;
   const createdMaterials: THREE.Material[] = [];
   const material = new THREE.MeshPhysicalMaterial({
     color: skin ? skinToneColor(skin.tone) : 0xd8dde5,
@@ -102,8 +103,9 @@ export async function createAnimatedGlb(
     material.normalMap = skinTextures.normal;
     material.normalScale.set(0.42, 0.42);
     material.displacementMap = skinTextures.displacement;
-    material.displacementScale = 0.00055;
-    material.displacementBias = -0.000275;
+    const displacementScale = skinDisplacementScale(mesh);
+    material.displacementScale = displacementScale;
+    material.displacementBias = -displacementScale * 0.5;
     material.aoMap = skinTextures.occlusion;
     material.aoMapIntensity = 0.38;
     material.specularIntensityMap = skinTextures.specular;
@@ -111,16 +113,13 @@ export async function createAnimatedGlb(
     material.roughness = 0.54;
   }
   if (options.avatarKind === "facecap") {
-    const tongueMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xb45f68,
-      roughness: 0.58,
-      metalness: 0,
-      side: THREE.DoubleSide,
-    });
-    createdMaterials.push(tongueMaterial);
-    splitFacecapTongueMaterial(mesh, material, tongueMaterial);
+    const mouthMaterials = createFacecapMouthMaterials();
+    createdMaterials.push(mouthMaterials.oral, mouthMaterials.teeth);
+    splitFacecapMouthMaterials(mesh, material, mouthMaterials);
+    const upperTeeth = gltf.scene.getObjectByName("mesh_3") ?? gltf.scene.getObjectByName("teeth");
+    if (upperTeeth instanceof THREE.Mesh) upperTeeth.material = mouthMaterials.teeth;
   } else {
-    mesh.material = material;
+    gnmEyeMaterials = installGnmEyeMaterials(mesh, material);
   }
 
   const performanceRoot = new THREE.Group();
@@ -195,6 +194,7 @@ export async function createAnimatedGlb(
     return new Uint8Array(exported);
   } finally {
     disposeSkinTextureSet(skinTextures);
+    disposeGnmEyeMaterials(gnmEyeMaterials);
     createdMaterials.forEach((entry) => entry.dispose());
   }
 }

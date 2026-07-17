@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.1.1-54ddb2" alt="Release v1.1.1"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.0-54ddb2" alt="Release v1.2.0"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages web edition"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 and React">
@@ -28,19 +28,21 @@ https://github.com/user-attachments/assets/e1449cad-ea74-4912-b77a-a0effe41c102
 
 Author: [Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.1.1` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
+GNM Studio `1.2.0` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
 Three.js, Rust, and Tauri in a portable Windows application, with a companion
 GitHub Pages edition for trying the tracking and animation workflow online. It
 can drive a head from a webcam, record facial motion and video, and export
 animation for Blender without requiring Python, Node.js, Rust, CUDA, or model
-downloads. The desktop edition also provides native seeded identity generation.
+downloads. Seeded identity generation is available in both editions: the desktop
+uses the exact native Rust evaluator, while the web edition evaluates a compact
+quantized basis in a dedicated worker so the interface stays responsive.
 
 ## Download and Run
 
 1. Download the latest Windows x64 archive from
    [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases).
 2. Extract it to a writable folder such as `C:\AI\GNM-Studio\`.
-3. Run `GNM-Studio-v1.1.1.exe`.
+3. Run `GNM-Studio-v1.2.0.exe`.
 4. Approve camera and/or microphone access if you want live capture, or choose
    **Continue without capture** for manual avatar work.
 5. For tracked performances, hold a neutral expression and use **Calibrate neutral**.
@@ -49,8 +51,8 @@ Two portable archives may be published:
 
 | Package | Use it when |
 | --- | --- |
-| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.1/GNM-Studio-1.1.1-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
-| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.1.1/GNM-Studio-1.1.1-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
+| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.0/GNM-Studio-1.2.0-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
+| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.0/GNM-Studio-1.2.0-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
 
 The application and all model assets are embedded. No installer is required.
 
@@ -64,9 +66,11 @@ audio are not uploaded to an application server.
 The web edition includes the base GNM head and FaceCap 52 avatar, MediaPipe GPU/CPU tracking,
 calibration, overlays, landmarks, smoothing, expressions and locks, PBR skin,
 backgrounds, motion/video recording, playback, JSON import/export, animated GLB
-export, and browser-based MP4/WebM saving. Browser codec support determines MP4
-availability. Native seeded identity evaluation and system FFmpeg are desktop
-only because they use the Rust/Tauri process.
+export, browser-based MP4/WebM saving, and seeded GNM identity generation in a
+dedicated Web Worker. Browser codec support determines MP4 availability. The
+web identity basis is downloaded lazily the first time Create is applied and is
+then eligible for normal browser caching. The exact native Rust identity
+evaluator and system FFmpeg integration remain desktop-only.
 
 The hosted interface is phone- and tablet-responsive: the live viewport stays
 first, while model, capture, layer, material, recording, and export controls
@@ -79,9 +83,13 @@ lives at its `GNM-Studio` subpath.
 
 ## Features
 
-- Native Google GNM Head v3 mesh with 17,821 vertices and 35,324 triangles.
+- Native Google GNM Head v3 mesh with 17,821 vertices and 35,324 triangles,
+  including separately materialed left/right hazel eyes with preserved black
+  pupils and lightweight gaze movement, white dental arches, and a red tongue.
 - Offline MIT FaceCap avatar with all 52 MediaPipe/ARKit-style morph targets,
-  including direct jaw, gaze, cheek, lip, and tongue controls.
+  including direct jaw, gaze, cheek, lip, and tongue controls, preserved eye
+  textures, a procedural iris/pupil layer that follows eye gaze, white upper and
+  lower teeth, and pink oral tissue isolated from the skin material.
 - A persistent card-based mocap model picker: GNM keeps its semantic/native
   identity workflow, while FaceCap exposes grouped 52-channel sliders and
   independent freeze locks.
@@ -91,14 +99,16 @@ lives at its `GNM-Studio` subpath.
 - Right-click tracking selector for persisted Auto, GPU-only, or CPU-only mode,
   with unavailable backends disabled after probing.
 - Verification-style neutral calibration with orange/green face placement,
-  stable 3-2-1 gating, temporary camera-only verification, restored layers,
-  and a real neutral expression/head-orientation baseline.
+  cover-crop-aware guide-size matching, movement rejection, stable 3-2-1
+  gating, temporary camera-only verification, restored layers, and a real
+  neutral expression/head-orientation baseline.
 - Separate adaptive 0–100% facial and head-motion smoothing with deadbands and
   one-frame transient rejection. Tiny isolated twitches are discarded while
   sustained deliberate motion opens the filter quickly.
 - Face-only head orientation using MediaPipe's facial matrix with a landmark
   fallback, neutral-relative yaw/pitch/roll strengths, dead zone, and smoothing;
-  no torso or shoulder tracker is used.
+  image/Three.js roll conversion and mirroring are applied exactly once, and no
+  torso or shoulder tracker is used.
 - Twenty GNM semantic expression sliders with independent illuminated freeze locks,
   plus a stronger derived lower-jaw morph for decisive wide-mouth opening.
 - Webcam-only, avatar-only, or transparent avatar-over-webcam viewing modes.
@@ -112,7 +122,8 @@ lives at its `GNM-Studio` subpath.
   and restores the studio canvas automatically when it closes.
 - Experimental repeated PBR skin material, off and collapsed by default, with
   a no-tint white neutral option plus five base tones, aligned colour/normal/displacement/occlusion/specular maps,
-  scale/rotation controls, adjustable seam feathering, and flicker-free live updates.
+  scale/rotation controls, adjustable seam feathering, flicker-free live updates,
+  and FaceCap-aware quantized-UV decoding/model-relative displacement.
 - Mouse-following point light with `L` to freeze/rebind, plus enable and power controls.
 - Studio gradient, solid colour, transparent, and locally stored custom image
   backgrounds with aspect-preserving cover fit, replace/remove, and 100–300% zoom.
@@ -123,7 +134,8 @@ lives at its `GNM-Studio` subpath.
 - Auto, portable WebCodecs, or optional system FFmpeg MP4 backends. FFmpeg can
   be found through PATH or selected as an executable and is never required.
 - Motion recording, pause/resume, seekable playback, an explicit Return to Live
-  control, validated JSON re-import, and copyable detailed error messages.
+  control, validated JSON re-import, copyable detailed error messages, and one
+  aligned desktop row for transport, timeline, FPS, import, and export controls.
 - Dark/light themes, five accents, and persistent 80–125% interface scaling.
 - Native default-browser links for GitHub and Releases.
 
@@ -144,8 +156,11 @@ are bundled into the release executable:
 
 Camera frames and microphone samples remain on the local computer. The web
 edition downloads the same static model, WASM, texture, and code assets from
-GitHub Pages on first load and processes capture locally afterward; browser
-caching may retain those assets. The desktop edition only uses internet access
+GitHub Pages as needed and processes capture locally afterward; browser caching
+may retain those assets. Applying a web identity lazily downloads an additional
+compressed 6.85 MB quantized GNM identity basis and evaluates it in a dedicated
+worker—no face, camera, identity settings, or generated vertices are uploaded.
+The desktop edition only uses internet access
 when you deliberately open an external link. On an unusually old Windows
 installation, Microsoft WebView2 may need to be installed separately.
 
@@ -193,7 +208,7 @@ included in video modes unless muted.
 | WebM source | Optional unconverted source when WebView2 recorded WebM internally | Diagnostics or archival |
 
 For Blender, animated GLB is the recommended editable export. Import it with
-**File → Import → glTF 2.0**. Alembic export is not part of `1.1.1`.
+**File → Import → glTF 2.0**. Alembic export is not part of `1.2.0`.
 Export defaults include local date and time down to seconds, for example
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`.
 
@@ -210,6 +225,13 @@ The native Rust core evaluates the released GNM identity, expression, pose
 correctives, forward kinematics, and linear-blend skinning path directly from
 the bundled NPZ model. Automated tests compare neutral and posed output against
 the original Python implementation.
+
+The browser cannot call that Rust/Tauri command, so its Create panel lazily
+loads a per-component int8-quantized identity basis and evaluates all 17,821
+vertices in a dedicated JavaScript Web Worker. This keeps the UI/tracker thread
+free and avoids any server processing. Deterministic tests cover the compressed
+basis parser and deformation output; the desktop continues using the full-
+precision native path and does not bundle or execute the browser basis.
 
 The live GNM viewport uses 20 semantic morph targets derived from the upstream
 semantic decoder. Because GNM does not expose an ARKit-style jaw bone, GNM

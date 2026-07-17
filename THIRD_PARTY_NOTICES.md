@@ -2,7 +2,9 @@
 
 GNM Studio's own source code is licensed under Apache-2.0. Bundled dependencies remain under their respective licenses.
 
-- Google GNM and MediaPipe Tasks: Apache-2.0.
+- Google GNM and MediaPipe Tasks: Apache-2.0. The web edition's compressed,
+  quantized identity basis is derived from the released Google GNM model data
+  and remains subject to the same GNM Apache-2.0 terms and attribution.
 - Tauri: Apache-2.0 and MIT.
 - React, Three.js, Phosphor Icons, and other JavaScript dependencies: their package-declared licenses, primarily MIT.
 - Basis Universal's KTX2 transcoder is bundled through Three.js for offline FaceCap texture decoding and is licensed under Apache-2.0: <https://github.com/BinomialLLC/basis_universal>.

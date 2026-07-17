@@ -10,8 +10,33 @@ const jsonLength = source.readUInt32LE(12);
 const jsonType = source.toString("ascii", 16, 20);
 if (jsonType !== "JSON") throw new Error("facecap.glb does not begin with a JSON chunk");
 const gltf = JSON.parse(source.toString("utf8", 20, 20 + jsonLength).trim());
-if (!gltf.extensionsUsed?.includes("KHR_texture_basisu")) {
-  throw new Error("facecap.glb no longer declares its required KHR_texture_basisu textures");
+for (const extension of ["KHR_texture_basisu", "EXT_meshopt_compression"]) {
+  if (!gltf.extensionsUsed?.includes(extension)) {
+    throw new Error(`facecap.glb no longer declares its required ${extension} extension`);
+  }
+}
+const loaderSource = readFileSync(fileURLToPath(new URL("../src/lib/ktx2.ts", import.meta.url)), "utf8");
+for (const setupCall of ["setKTX2Loader", "setMeshoptDecoder"]) {
+  if (!loaderSource.includes(setupCall)) throw new Error(`FaceCap runtime loader is missing ${setupCall}`);
+}
+const eyeSource = readFileSync(fileURLToPath(new URL("../src/lib/facecapEyes.ts", import.meta.url)), "utf8");
+for (const marker of ["eyeLeft", "eyeRight", "pupilMask", "irisMask"]) {
+  if (!eyeSource.includes(marker)) throw new Error(`FaceCap procedural pupil layer is missing ${marker}`);
+}
+const stageSource = readFileSync(fileURLToPath(new URL("../src/components/Stage.tsx", import.meta.url)), "utf8");
+if (!stageSource.includes("installFacecapPupils(model)")) throw new Error("FaceCap Stage does not install its pupil layer");
+for (const marker of [
+  "normalizeFacecapSkinUvs(face)", "skinDisplacementScale(faceRef.current)",
+  "splitFacecapMouthMaterials(face", "createFacecapMouthMaterials",
+]) {
+  if (!stageSource.includes(marker)) throw new Error(`FaceCap Stage PBR path is missing ${marker}`);
+}
+const exportSource = readFileSync(fileURLToPath(new URL("../src/lib/glbExport.ts", import.meta.url)), "utf8");
+for (const marker of [
+  "normalizeFacecapSkinUvs(mesh)", "skinDisplacementScale(mesh)",
+  "splitFacecapMouthMaterials(mesh", "mouthMaterials.teeth",
+]) {
+  if (!exportSource.includes(marker)) throw new Error(`FaceCap GLB PBR path is missing ${marker}`);
 }
 
 const expectedTargets = [
@@ -40,4 +65,8 @@ const nodeNames = new Set(gltf.nodes.map((node) => node.name));
 for (const name of ["head", "teeth", "eyeLeft", "eyeRight"]) {
   if (!nodeNames.has(name)) throw new Error(`facecap.glb is missing required node ${name}`);
 }
-console.log(`FaceCap asset verified: ${source.length.toLocaleString()} bytes, 52 named morphs, KTX2/PBR-ready, separate eyes and teeth.`);
+const mouthSource = readFileSync(fileURLToPath(new URL("../src/lib/facecapModel.ts", import.meta.url)), "utf8");
+for (const marker of ["GNM Studio FaceCap gums and tongue", "GNM Studio FaceCap enamel", "componentSize >= 24", "componentSize >= 96"]) {
+  if (!mouthSource.includes(marker)) throw new Error(`FaceCap oral material implementation is missing ${marker}`);
+}
+console.log(`FaceCap asset verified: ${source.length.toLocaleString()} bytes, 52 named morphs, KTX2 + Meshopt ready, white upper/lower teeth, pink oral tissue, and procedural pupils.`);

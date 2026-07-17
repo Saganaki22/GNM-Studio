@@ -1,4 +1,4 @@
-import type { AppSettings, TrackingFrame } from "../types";
+import type { AppSettings, IdentityVertices, TrackingFrame } from "../types";
 
 export const outputChannelName = "gnm-studio-output-v1";
 
@@ -6,7 +6,7 @@ export type OutputSnapshot = {
   settings: AppSettings;
   frame: TrackingFrame | null;
   neutralFrame: TrackingFrame | null;
-  identityVertices: number[][] | null;
+  identityVertices: IdentityVertices | null;
   manualExpressions: Record<string, number>;
   frozenExpressions: Record<string, number>;
   trackingReady: boolean;

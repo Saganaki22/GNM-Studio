@@ -16,6 +16,9 @@ export type TrackingFrame = {
 export type FaceAlignment = {
   status: "missing" | "adjust" | "ready";
   message: string;
+  centerX?: number;
+  centerY?: number;
+  sizeRatio?: number;
 };
 
 export type RecordedFrame = {
@@ -23,6 +26,8 @@ export type RecordedFrame = {
   blendshapes: Record<string, number>;
   matrix: number[];
 };
+
+export type IdentityVertices = number[][] | Float32Array;
 
 export type DeviceOption = {
   id: string;

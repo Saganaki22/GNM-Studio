@@ -32,9 +32,9 @@ export function OutputWindow() {
   const handleCompositeCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     canvasRef.current = canvas;
   }, []);
-  const handleSkinMaterialError = useCallback((message: string) => {
+  const handleStageError = useCallback((message: string) => {
     setError(message);
-    post({ type: "error", operation: "Popout material", message });
+    post({ type: "error", operation: message.startsWith("Avatar model:") ? "Popout avatar" : "Popout material", message });
   }, [post]);
 
   const stopRecorderTracks = () => {
@@ -240,7 +240,7 @@ export function OutputWindow() {
         resetViewSignal={snapshot.resetViewSignal}
         onCancelCalibration={() => undefined}
         onCompositeCanvas={handleCompositeCanvas}
-        onSkinMaterialError={handleSkinMaterialError}
+        onStageError={handleStageError}
       />
       {error && <div className="output-error">{error}</div>}
     </main>

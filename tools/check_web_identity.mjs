@@ -1,0 +1,24 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
+import { fileURLToPath } from "node:url";
+import { evaluateWebIdentity, parseWebIdentityRuntime } from "../src/lib/webIdentityRuntime.ts";
+
+const path = fileURLToPath(new URL("../webapp-assets/models/gnm_identity_basis.gni.gz", import.meta.url));
+const compressed = readFileSync(path);
+assert.ok(compressed.length < 8_000_000, "web identity runtime should remain below 8 MB compressed");
+const decoded = gunzipSync(compressed);
+const buffer = decoded.buffer.slice(decoded.byteOffset, decoded.byteOffset + decoded.byteLength);
+const runtime = parseWebIdentityRuntime(buffer);
+const weights = new Float32Array(runtime.components);
+weights[0] = 1;
+weights[17] = -0.35;
+weights[252] = 0.75;
+const positions = evaluateWebIdentity(runtime, weights);
+assert.equal(positions.length, 17_821 * 3);
+assert.ok(positions.every(Number.isFinite), "web identity output must contain only finite positions");
+assert.notDeepEqual(Array.from(positions.slice(0, 30)), Array.from(runtime.template.slice(0, 30)), "identity weights must deform the template");
+const digest = createHash("sha256").update(new Uint8Array(positions.buffer)).digest("hex");
+assert.equal(digest, "abd692c88b00b16ac089ab3779d787a3aaea9902cc09f8857cf168b46e79dfde");
+console.log(`Web identity verified: ${runtime.components} components, ${runtime.vertices} vertices, worker-math SHA-256 ${digest}.`);

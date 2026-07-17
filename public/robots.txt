@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://drbaph.is-a.dev/GNM-Studio/sitemap.xml

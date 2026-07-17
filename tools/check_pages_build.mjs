@@ -9,7 +9,14 @@ const required = [
   ".nojekyll",
   "site.webmanifest",
   "favicon.svg",
+  "apple-touch-icon.png",
+  "icon-192.png",
+  "icon-512.png",
+  "og-image.png",
+  "robots.txt",
+  "sitemap.xml",
   "models/gnm_head_runtime.glb",
+  "models/gnm_identity_basis.gni.gz",
   "models/facecap.glb",
   "models/face_landmarker.task",
   "wasm/vision_wasm_internal.wasm",
@@ -28,6 +35,18 @@ for (const extension of [".js", ".wasm"]) {
 
 const index = readFileSync(join(rootPath, "index.html"), "utf8");
 if (!index.includes("/GNM-Studio/")) throw new Error("index.html is not using the /GNM-Studio/ project base path");
+for (const metadata of [
+  "rel=\"icon\" type=\"image/svg+xml\" href=\"/GNM-Studio/favicon.svg\"",
+  "rel=\"canonical\" href=\"https://drbaph.is-a.dev/GNM-Studio/\"",
+  "property=\"og:url\" content=\"https://drbaph.is-a.dev/GNM-Studio/\"",
+  "property=\"og:image\" content=\"https://drbaph.is-a.dev/GNM-Studio/og-image.png\"",
+  "property=\"og:image:width\" content=\"1200\"",
+  "property=\"og:image:height\" content=\"630\"",
+  "name=\"twitter:card\" content=\"summary_large_image\"",
+  "application/ld+json",
+]) {
+  if (!index.includes(metadata)) throw new Error(`index.html is missing SEO metadata: ${metadata}`);
+}
 if (/\b(?:src|href)=["']\/(?!GNM-Studio\/)/.test(index)) {
   throw new Error("index.html contains a root-relative URL outside /GNM-Studio/");
 }
@@ -35,6 +54,15 @@ if (/\b(?:src|href)=["']\/(?!GNM-Studio\/)/.test(index)) {
 const manifest = JSON.parse(readFileSync(join(rootPath, "site.webmanifest"), "utf8"));
 if (manifest.start_url !== "./" || manifest.scope !== "./") {
   throw new Error("Web manifest must stay relative to the project Pages path");
+}
+
+const ogImage = readFileSync(join(rootPath, "og-image.png"));
+if (ogImage.toString("hex", 1, 4) !== "504e47" || ogImage.readUInt32BE(16) !== 1200 || ogImage.readUInt32BE(20) !== 630) {
+  throw new Error("Open Graph image must be a 1200x630 PNG");
+}
+const sitemap = readFileSync(join(rootPath, "sitemap.xml"), "utf8");
+if (!sitemap.includes("<loc>https://drbaph.is-a.dev/GNM-Studio/</loc>")) {
+  throw new Error("Sitemap is missing the canonical GNM Studio URL");
 }
 
 const textFiles = [];

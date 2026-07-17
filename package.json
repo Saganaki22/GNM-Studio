@@ -1,7 +1,7 @@
 {
   "name": "gnm-studio",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "build:web": "tsc -b && vite build --mode web",
     "check:web": "node tools/check_pages_build.mjs",
-    "check:assets": "node tools/check_facecap_asset.mjs",
+    "check:assets": "node tools/check_facecap_asset.mjs && node tools/check_gnm_eyes.mjs && node --experimental-strip-types tools/check_skin_material.mjs && node --experimental-strip-types tools/check_head_pose.mjs && node --experimental-strip-types tools/check_face_alignment.mjs && node --experimental-strip-types tools/check_web_identity.mjs",
     "tauri": "tauri",
     "check": "npm run check:assets && npm run build && cargo check --manifest-path src-tauri/Cargo.toml",
     "test": "npm run check:assets && npm run build && cargo test --manifest-path src-tauri/Cargo.toml",

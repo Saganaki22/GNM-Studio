@@ -3,6 +3,10 @@ import type { HeadPoseSettings, TrackingFrame } from "../types";
 
 const landmark = (frame: TrackingFrame, index: number) => frame.landmarks[index];
 
+function angleDelta(value: number, baseline: number) {
+  return THREE.MathUtils.euclideanModulo(value - baseline + Math.PI, Math.PI * 2) - Math.PI;
+}
+
 function landmarkEuler(frame: TrackingFrame, neutral: TrackingFrame | null) {
   const solve = (value: TrackingFrame) => {
     const leftEye = landmark(value, 33);
@@ -19,13 +23,20 @@ function landmarkEuler(frame: TrackingFrame, neutral: TrackingFrame | null) {
     const centerY = (forehead.y + chin.y) * 0.5;
     const yaw = THREE.MathUtils.clamp((nose.x - eyeMidX) / faceWidth * 2.2, -1.1, 1.1);
     const pitch = THREE.MathUtils.clamp((nose.y - centerY) / faceHeight * 1.75, -0.9, 0.9);
-    const roll = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
+    // Landmark Y grows down the camera image while Three.js Y grows up. Negate
+    // the image-space eye-line angle so roll follows the visible head tilt.
+    const roll = -Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
     return new THREE.Euler(pitch, yaw, roll, "XYZ");
   };
   const current = solve(frame);
   if (!neutral) return current;
   const baseline = solve(neutral);
-  return new THREE.Euler(current.x - baseline.x, current.y - baseline.y, current.z - baseline.z, "XYZ");
+  return new THREE.Euler(
+    angleDelta(current.x, baseline.x),
+    angleDelta(current.y, baseline.y),
+    angleDelta(current.z, baseline.z),
+    "XYZ",
+  );
 }
 
 function matrixQuaternion(frame: TrackingFrame, neutral: TrackingFrame | null) {
@@ -55,28 +66,46 @@ export function resolveHeadPose(
   if (!settings.enabled) return new THREE.Quaternion();
   const matrixPose = matrixQuaternion(frame, neutral);
   const fallbackEuler = landmarkEuler(frame, neutral);
-  let sourceEuler = matrixPose
+  const hasNeutralMatrix = neutral?.matrix.length === 16;
+  // MediaPipe's uncalibrated matrix contains its camera/model coordinate-basis
+  // rotation. Treating that as a user pose can put the first target more than
+  // 75 degrees from identity, causing the old jump guard to reject every frame.
+  // Landmarks provide a stable face-only pose until a neutral matrix exists.
+  let sourceEuler = matrixPose && hasNeutralMatrix
     ? new THREE.Euler().setFromQuaternion(matrixPose, "XYZ")
     : fallbackEuler;
 
-  if (matrixPose) {
-    const matrixYaw = sourceEuler.y;
-    const disagreement = Math.abs(THREE.MathUtils.euclideanModulo(matrixYaw - fallbackEuler.y + Math.PI, Math.PI * 2) - Math.PI);
-    if (disagreement > THREE.MathUtils.degToRad(50) && Math.abs(fallbackEuler.y) > 0.08) {
-      sourceEuler = new THREE.Euler(sourceEuler.x, fallbackEuler.y, sourceEuler.z, "XYZ");
-    }
+  if (matrixPose && hasNeutralMatrix) {
+    const safeAxis = (matrixValue: number, fallbackValue: number) => {
+      if (!Number.isFinite(matrixValue)) return fallbackValue;
+      const disagreement = Math.abs(THREE.MathUtils.euclideanModulo(matrixValue - fallbackValue + Math.PI, Math.PI * 2) - Math.PI);
+      return disagreement > THREE.MathUtils.degToRad(50) && Math.abs(fallbackValue) > 0.04
+        ? fallbackValue
+        : matrixValue;
+    };
+    sourceEuler = new THREE.Euler(
+      safeAxis(sourceEuler.x, fallbackEuler.x),
+      safeAxis(sourceEuler.y, fallbackEuler.y),
+      // Eye-line roll is stable and already in display coordinates. Matrix
+      // roll conventions vary between MediaPipe delegates and could otherwise
+      // receive the mirror inversion twice after neutral calibration.
+      fallbackEuler.z,
+      "XYZ",
+    );
   }
 
   const threshold = THREE.MathUtils.degToRad(settings.deadZone);
+  const axisLimit = THREE.MathUtils.degToRad(75);
   const target = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-    deadZone(sourceEuler.x, threshold) * settings.pitchStrength,
-    deadZone(mirror ? -sourceEuler.y : sourceEuler.y, threshold) * settings.yawStrength,
-    deadZone(mirror ? -sourceEuler.z : sourceEuler.z, threshold) * settings.rollStrength,
+    THREE.MathUtils.clamp(deadZone(sourceEuler.x, threshold) * settings.pitchStrength, -axisLimit, axisLimit),
+    THREE.MathUtils.clamp(deadZone(mirror ? -sourceEuler.y : sourceEuler.y, threshold) * settings.yawStrength, -axisLimit, axisLimit),
+    THREE.MathUtils.clamp(deadZone(mirror ? -sourceEuler.z : sourceEuler.z, threshold) * settings.rollStrength, -axisLimit, axisLimit),
     "XYZ",
   ));
-  const maxAngle = THREE.MathUtils.degToRad(75);
-  if (previous && previous.angleTo(target) > maxAngle) return previous.clone();
   if (!previous) return target;
   const responsiveness = Math.max(0.04, 1 - settings.smoothing * 0.9);
-  return previous.clone().slerp(target, responsiveness).normalize();
+  const next = previous.clone().slerp(target, responsiveness).normalize();
+  const maximumStep = THREE.MathUtils.degToRad(24);
+  if (previous.angleTo(next) <= maximumStep) return next;
+  return previous.clone().rotateTowards(next, maximumStep).normalize();
 }

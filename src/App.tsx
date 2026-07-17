@@ -14,6 +14,8 @@ import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
 import { createAnimatedGlb } from "./lib/glbExport";
 import { loadBackgroundImage, removeBackgroundImage, saveBackgroundImage } from "./lib/backgroundStore";
 import { DenseDecoder, identityDecoderInput } from "./lib/decoder";
+import { identityVertexCount } from "./lib/identityVertices";
+import type { WebIdentityEvaluator } from "./lib/webIdentity";
 import { avatarProfiles, facecapControlGroups, facecapInfluences } from "./lib/avatarProfiles";
 import {
   outputChannelName, type MainToOutputMessage, type OutputSnapshot, type OutputToMainMessage,
@@ -23,8 +25,10 @@ import { semanticExpressionNames, semanticInfluences } from "./lib/retarget";
 import { skinToneOptions } from "./lib/skinMaterial";
 import { AdaptiveTrackingSmoother } from "./lib/trackingSmoothing";
 import { assetUrl } from "./lib/assets";
+import type { ViewportSize } from "./lib/coverProjection";
+import { assessFaceAlignment } from "./lib/faceAlignment";
 import type {
-  AppSettings, AvatarKind, DeviceOption, FaceAlignment, RecordedFrame, RecordingMode, TrackingBackend, TrackingFrame,
+  AppSettings, AvatarKind, DeviceOption, FaceAlignment, IdentityVertices, RecordedFrame, RecordingMode, TrackingBackend, TrackingFrame,
   VideoEncoderBackend,
 } from "./types";
 import "./App.css";
@@ -90,31 +94,6 @@ function preferredRecorderMimeType() {
 
 function afterBrowserPaint() {
   return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-}
-
-function assessFaceAlignment(frame: TrackingFrame | null, mirror: boolean): FaceAlignment {
-  if (!frame || frame.landmarks.length < 100) {
-    return { status: "missing", message: "No face detected — look toward the camera" };
-  }
-  const xs = frame.landmarks.map((point) => point.x).filter(Number.isFinite);
-  const ys = frame.landmarks.map((point) => point.y).filter(Number.isFinite);
-  if (!xs.length || !ys.length) {
-    return { status: "missing", message: "No face detected — look toward the camera" };
-  }
-  const minX = Math.min(...xs); const maxX = Math.max(...xs);
-  const minY = Math.min(...ys); const maxY = Math.max(...ys);
-  const rawCenterX = (minX + maxX) / 2;
-  const centerX = mirror ? 1 - rawCenterX : rawCenterX;
-  const centerY = (minY + maxY) / 2;
-  const faceHeight = maxY - minY;
-
-  if (faceHeight < 0.28) return { status: "adjust", message: "Move closer to the camera" };
-  if (faceHeight > 0.72) return { status: "adjust", message: "Move slightly farther away" };
-  if (centerX < 0.38) return { status: "adjust", message: "Move right into the guide" };
-  if (centerX > 0.62) return { status: "adjust", message: "Move left into the guide" };
-  if (centerY < 0.34) return { status: "adjust", message: "Move down into the guide" };
-  if (centerY > 0.66) return { status: "adjust", message: "Move up into the guide" };
-  return { status: "ready", message: "Face aligned — relax and hold still" };
 }
 
 function estimateTrackingQuality(frame: TrackingFrame | null) {
@@ -263,7 +242,7 @@ function App() {
   const [identitySeed, setIdentitySeed] = useState("GNM-2048");
   const [identityGender, setIdentityGender] = useState<"female" | "male" | "blend">("blend");
   const [identityEthnicity, setIdentityEthnicity] = useState<"middle_eastern" | "asian" | "white" | "black" | "blend">("blend");
-  const [identityVertices, setIdentityVertices] = useState<number[][] | null>(null);
+  const [identityVertices, setIdentityVertices] = useState<IdentityVertices | null>(null);
   const [identityStatus, setIdentityStatus] = useState<"ready" | "generating" | "error">("ready");
   const [manualExpressions, setManualExpressions] = useState<Record<string, number>>({});
   const [frozenExpressions, setFrozenExpressions] = useState<Record<string, number>>({});
@@ -348,9 +327,11 @@ function App() {
   const [trackerRestartKey, setTrackerRestartKey] = useState(0);
   const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [stageSize, setStageSize] = useState<ViewportSize>({ width: 640, height: 480 });
+  const videoRef = useRef<HTMLVideoElement>(null);
   const faceAlignment = useMemo(
-    () => assessFaceAlignment(trackingFrame, settings.mirror),
-    [settings.mirror, trackingFrame],
+    () => assessFaceAlignment(trackingFrame, settings.mirror, videoRef.current, stageSize),
+    [settings.mirror, stageSize, trackingFrame],
   );
   const calibrationReadiness: FaceAlignment = calibrating
     ? faceAlignment
@@ -359,7 +340,6 @@ function App() {
       : trackingFrame
         ? { status: "ready", message: "Face detected — press Calibrate neutral when ready" }
         : { status: "missing", message: cameraAccess === "ready" ? "Calibration idle — waiting for a face" : "Calibration idle — connect a camera when you want face tracking" };
-  const videoRef = useRef<HTMLVideoElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const motionInputRef = useRef<HTMLInputElement>(null);
   const backgroundObjectUrlRef = useRef<string | null>(null);
@@ -396,6 +376,7 @@ function App() {
   const trackingSmootherRef = useRef(new AdaptiveTrackingSmoother());
   const calibrationSessionRef = useRef(0);
   const identityDecoderRef = useRef<DenseDecoder | null>(null);
+  const webIdentityEvaluatorRef = useRef<WebIdentityEvaluator | null>(null);
   const toastIdRef = useRef(0);
 
   mutedRef.current = settings.muted;
@@ -639,15 +620,20 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!isDesktopRuntime) return;
+    let disposed = false;
     DenseDecoder.load(assetUrl("models/gnm_identity_decoder.bin"))
-      .then((decoder) => { identityDecoderRef.current = decoder; })
+      .then((decoder) => { if (!disposed) identityDecoderRef.current = decoder; })
       .catch((error) => setDeviceError(`Identity decoder: ${String(error)}`));
+    return () => {
+      disposed = true;
+      webIdentityEvaluatorRef.current?.dispose();
+      webIdentityEvaluatorRef.current = null;
+    };
   }, []);
 
   const generateIdentity = async (seed = identitySeed) => {
-    if (!isDesktopRuntime || !identityDecoderRef.current) {
-      setDeviceError("Seeded identity generation uses the native GNM evaluator and is available in the Windows desktop edition. The web edition supports the base head, tracking, expressions, recording, and exports.");
+    if (!identityDecoderRef.current) {
+      setDeviceError("Identity generation: the local identity decoder is still loading. Wait a moment and retry.");
       return;
     }
     setIdentityStatus("generating");
@@ -655,19 +641,28 @@ function App() {
       const identity = identityDecoderRef.current.evaluate(
         identityDecoderInput(seed, identityGender, identityEthnicity),
       );
-      const { invoke } = await import("@tauri-apps/api/core");
-      const vertices = await invoke<number[][]>("gnm_evaluate", {
-        identity: Array.from(identity),
-        expression: new Array(383).fill(0),
-        rotations: new Array(4).fill(null).map(() => [0, 0, 0]),
-        translation: [0, 0, 0],
-      });
+      let vertices: IdentityVertices;
+      if (isDesktopRuntime) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        vertices = await invoke<number[][]>("gnm_evaluate", {
+          identity: Array.from(identity),
+          expression: new Array(383).fill(0),
+          rotations: new Array(4).fill(null).map(() => [0, 0, 0]),
+          translation: [0, 0, 0],
+        });
+      } else {
+        if (!webIdentityEvaluatorRef.current) {
+          const { WebIdentityEvaluator } = await import("./lib/webIdentity");
+          webIdentityEvaluatorRef.current = new WebIdentityEvaluator();
+        }
+        vertices = await webIdentityEvaluatorRef.current.evaluate(identity);
+      }
       setIdentityVertices(vertices);
       setIdentityStatus("ready");
       pushToast({
         type: "success",
         title: "Identity generated",
-        message: `GNM rebuilt ${vertices.length.toLocaleString()} vertices from seed ${seed}.`,
+        message: `GNM rebuilt ${identityVertexCount(vertices).toLocaleString()} vertices from seed ${seed}${isDesktopRuntime ? " with the native Rust evaluator" : " in a background web worker"}.`,
       });
     } catch (error) {
       setIdentityStatus("error");
@@ -1328,15 +1323,33 @@ function App() {
     setCalibrationComplete(false);
     setCountdown(null);
     let readySince: number | null = null;
+    let stableAnchor: Pick<FaceAlignment, "centerX" | "centerY" | "sizeRatio"> | null = null;
 
     while (calibrationSessionRef.current === session) {
       const alignment = faceAlignmentRef.current;
       const currentFrame = trackingFrameRef.current;
       if (alignment.status !== "ready" || !currentFrame) {
         readySince = null;
+        stableAnchor = null;
         setCountdown(null);
       } else {
-        readySince ??= performance.now();
+        const now = performance.now();
+        const movedSinceAnchor = stableAnchor
+          && alignment.centerX !== undefined && alignment.centerY !== undefined && alignment.sizeRatio !== undefined
+          && stableAnchor.centerX !== undefined && stableAnchor.centerY !== undefined && stableAnchor.sizeRatio !== undefined
+          && (
+            Math.hypot(alignment.centerX - stableAnchor.centerX, alignment.centerY - stableAnchor.centerY) > 0.018
+            || Math.abs(alignment.sizeRatio - stableAnchor.sizeRatio) > 0.035
+          );
+        if (!stableAnchor || movedSinceAnchor) {
+          stableAnchor = {
+            centerX: alignment.centerX,
+            centerY: alignment.centerY,
+            sizeRatio: alignment.sizeRatio,
+          };
+          readySince = now;
+        }
+        readySince ??= now;
         const elapsed = performance.now() - readySince;
         if (elapsed >= 3_000) {
           setNeutralFrame(currentFrame);
@@ -1878,7 +1891,6 @@ function App() {
     [displayedFrame],
   );
   const activeProfile = avatarProfiles[settings.avatarKind];
-  const identityControlsDisabled = isWebEdition || !activeProfile.supportsIdentity;
   const activeLiveExpressions: Record<string, number> = settings.avatarKind === "facecap" ? liveFacecap : liveSemantic;
   const toggleExpressionFreeze = (name: string) => {
     setFrozenExpressions((current) => {
@@ -1900,11 +1912,14 @@ function App() {
     setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !activeNames.has(name))));
   };
 
-  const handleSkinMaterialError = useCallback((message: string) => {
-    setDeviceError(`Experimental skin material: ${message}`);
+  const handleStageError = useCallback((message: string) => {
+    setDeviceError(message);
   }, []);
   const handleCompositeCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     avatarCanvasRef.current = canvas;
+  }, []);
+  const handleViewportResize = useCallback((width: number, height: number) => {
+    setStageSize((current) => current.width === width && current.height === height ? current : { width, height });
   }, []);
 
   useEffect(() => {
@@ -1985,7 +2000,7 @@ function App() {
         </div>
         {activePanel === "avatar" ? (
           <>
-            <section className="panel-section model-picker">
+            <section className="panel-section model-picker" data-workspace-target="create">
               <div className="section-heading"><span>Mocap model</span><small>Local avatars</small></div>
               <div className="model-choice-list" role="radiogroup" aria-label="Mocap avatar model">
                 {(["gnm", "facecap"] as AvatarKind[]).map((avatarKind) => {
@@ -2016,7 +2031,15 @@ function App() {
               </div>
               <p className="model-choice-detail">{settings.avatarKind === "gnm" ? `${(gnmInfo?.vertices ?? 17_821).toLocaleString()} vertices · ${(gnmInfo?.identityDimensions ?? 253) + (gnmInfo?.expressionDimensions ?? 383)} native controls` : "52 MediaPipe/ARKit morph targets · bundled offline KTX2 materials"}</p>
             </section>
-            <section className="panel-section" data-workspace-target="create"><div className="section-heading"><span>Identity</span><button onClick={randomizeIdentity} disabled={identityControlsDisabled || identityStatus === "generating"}><RefreshCw size={14} />{identityStatus === "generating" ? "Generating" : "Randomize"}</button></div><label className="field-label">Seed<input className="text-input" value={identitySeed} disabled={identityControlsDisabled} onChange={(event) => setIdentitySeed(event.target.value)} onBlur={() => { if (!identityControlsDisabled) void generateIdentity(); }} /></label><div className="two-up"><label className="field-label">Presentation<select value={identityGender} disabled={identityControlsDisabled} onChange={(event) => setIdentityGender(event.target.value as typeof identityGender)}><option value="blend">Blend</option><option value="female">Feminine</option><option value="male">Masculine</option></select></label><label className="field-label">Population<select value={identityEthnicity} disabled={identityControlsDisabled} onChange={(event) => setIdentityEthnicity(event.target.value as typeof identityEthnicity)}><option value="blend">Blend</option><option value="asian">Asian</option><option value="black">Black</option><option value="middle_eastern">Middle Eastern</option><option value="white">White</option></select></label></div><button className="secondary-button wide" onClick={() => void generateIdentity()} disabled={identityControlsDisabled || identityStatus === "generating"}>{!activeProfile.supportsIdentity ? "FaceCap uses its supplied identity" : isWebEdition ? "Desktop-only identity generator" : identityStatus === "generating" ? "Building GNM mesh…" : "Apply identity"}</button>{identityControlsDisabled && <p className="helper-copy web-edition-note">{!activeProfile.supportsIdentity ? "FaceCap has a fixed supplied identity; all 52 expressions, tracking, material and export tools remain available." : "The native seeded identity evaluator is desktop-only. Online you can track and animate the base GNM head, use every expression/material control, record, and export."}</p>}</section>
+            {activeProfile.supportsIdentity && (
+              <section className="panel-section">
+                <div className="section-heading"><span>Identity</span><button onClick={randomizeIdentity} disabled={identityStatus === "generating"}><RefreshCw size={14} />{identityStatus === "generating" ? "Generating" : "Randomize"}</button></div>
+                <label className="field-label">Seed<input className="text-input" value={identitySeed} onChange={(event) => setIdentitySeed(event.target.value)} onBlur={() => void generateIdentity()} /></label>
+                <div className="two-up"><label className="field-label">Presentation<select value={identityGender} onChange={(event) => setIdentityGender(event.target.value as typeof identityGender)}><option value="blend">Blend</option><option value="female">Feminine</option><option value="male">Masculine</option></select></label><label className="field-label">Population<select value={identityEthnicity} onChange={(event) => setIdentityEthnicity(event.target.value as typeof identityEthnicity)}><option value="blend">Blend</option><option value="asian">Asian</option><option value="black">Black</option><option value="middle_eastern">Middle Eastern</option><option value="white">White</option></select></label></div>
+                <button className="secondary-button wide" onClick={() => void generateIdentity()} disabled={identityStatus === "generating"}>{identityStatus === "generating" ? isWebEdition ? "Building in web worker…" : "Building GNM mesh…" : isWebEdition ? "Apply identity locally" : "Apply identity"}</button>
+                {isWebEdition && <p className="helper-copy web-edition-note">The first identity loads a compressed browser runtime, then evaluates locally in a dedicated worker. Camera tracking and the interface remain responsive.</p>}
+              </section>
+            )}
             <details className="panel-section experimental-skin">
               <summary><span><strong>Skin material</strong><small>Experimental</small></span><span className={settings.skinTextureEnabled ? "skin-summary-state enabled" : "skin-summary-state"}>{settings.skinTextureEnabled ? "Microtexture on" : "Microtexture off"}<ChevronDown size={14} /></span></summary>
               <div className="experimental-skin-content">
@@ -2167,7 +2190,8 @@ function App() {
           resetViewSignal={resetViewSignal}
           onCancelCalibration={cancelCalibration}
           onCompositeCanvas={handleCompositeCanvas}
-          onSkinMaterialError={handleSkinMaterialError}
+          onStageError={handleStageError}
+          onViewportResize={handleViewportResize}
         />
         ) : (
           <div className="popout-placeholder">

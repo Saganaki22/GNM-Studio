@@ -111,6 +111,28 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] Run frontend, web, Rust, portable package, and launch-smoke validation.
 - [x] Tag and publish v1.1.1, update `webapp-src`, and verify GitHub Actions and Pages.
 
+## Version 1.2.0
+
+- [x] Attach both Basis/KTX2 and Meshopt decoders before FaceCap load/export.
+- [x] Report FaceCap model-load failures separately from experimental skin-material failures.
+- [x] Prevent uncalibrated absolute matrices from permanently suppressing face-only head rotation.
+- [x] Add browser GNM identity evaluation through a lazy compressed basis and dedicated Web Worker.
+- [x] Keep desktop identity on the exact native Rust/NPZ path without bundling the web basis.
+- [x] Replace the web favicon with GNM branding and add canonical, Open Graph, Twitter, JSON-LD, manifest, robots, sitemap, and social image metadata.
+- [x] Add deterministic asset, head-pose, browser-identity, and Pages metadata checks.
+- [x] Hide GNM-only identity controls completely while the fixed-identity FaceCap avatar is selected.
+- [x] Restore visible FaceCap irises/pupils with a gaze-following procedural material layer.
+- [x] Tune the FaceCap iris to a 10% smaller hazel/green-brown ring while preserving the black pupil.
+- [x] Partition GNM's four disconnected eye shells into gaze-aware left/right hazel eye materials without applying skin PBR to the eyeballs.
+- [x] Decode FaceCap's quantized atlas UV transform before applying repeated colour, normal, AO, specular, and displacement skin maps.
+- [x] Scale skin displacement from mesh-local height so depth remains visible on both float GNM and quantized FaceCap geometry.
+- [x] Match calibration against the visible oval size after camera cover-cropping and reject movement during countdown.
+- [x] Correct image-space roll sign and prevent calibrated/mirrored roll from being inverted twice.
+- [x] Remove the foreground viewport vignette so studio gradients remain strictly behind camera/avatar layers.
+- [x] Align recording, playback, timeline, FPS, import, and export controls on one 44px desktop toolbar baseline.
+- [x] Separate FaceCap upper/lower enamel and oral tissue from skin PBR; separate GNM dental arches and tongue from skin PBR.
+- [x] Complete manual FaceCap, head rotation, web identity, popout, recording, eye, and oral-material tests before publication.
+
 ## Remaining production work
 
 - [ ] Fit a high-quality 52-to-383 MediaPipe/GNM retargeting matrix from matched landmarks.

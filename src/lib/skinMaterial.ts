@@ -167,3 +167,11 @@ export function disposeSkinTextureSet(textures: SkinTextureSet | null) {
 export function skinToneColor(tone: SkinTone) {
   return (skinToneOptions.find((option) => option.id === tone) ?? skinToneOptions[0]).baseColor;
 }
+
+/** Keep visible displacement proportional across float and quantized meshes. */
+export function skinDisplacementScale(mesh: THREE.Mesh) {
+  const geometry = mesh.geometry as THREE.BufferGeometry;
+  geometry.computeBoundingBox();
+  const height = geometry.boundingBox?.getSize(new THREE.Vector3()).y ?? 0.34;
+  return Math.max(1e-6, height * 0.00161);
+}
