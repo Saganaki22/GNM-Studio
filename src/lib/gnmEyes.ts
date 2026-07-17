@@ -2,6 +2,16 @@ import * as THREE from "three";
 
 type EyeSide = "left" | "right";
 
+export const gnmNeutralEyeDivergence = 0.006;
+const gnmGazeDeadZone = 0.055;
+
+/** Keep neutral pupils optically centred while ignoring tiny false "look in" scores. */
+export function gnmEyeTextureOffset(side: EyeSide, horizontalGaze: number) {
+  const deadZonedGaze = Math.sign(horizontalGaze) * Math.max(0, Math.abs(horizontalGaze) - gnmGazeDeadZone);
+  const opticalCenter = side === "left" ? gnmNeutralEyeDivergence : -gnmNeutralEyeDivergence;
+  return opticalCenter - deadZonedGaze * 0.04;
+}
+
 export type GnmEyeMaterialSet = {
   left: THREE.MeshPhysicalMaterial;
   right: THREE.MeshPhysicalMaterial;
@@ -10,7 +20,7 @@ export type GnmEyeMaterialSet = {
   textures: { left: THREE.CanvasTexture; right: THREE.CanvasTexture };
 };
 
-function eyeTexture() {
+function eyeTexture(side: EyeSide) {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 256;
@@ -45,6 +55,7 @@ function eyeTexture() {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.offset.x = gnmEyeTextureOffset(side, 0);
   texture.needsUpdate = true;
   return texture;
 }
@@ -66,8 +77,8 @@ function eyeMaterial(texture: THREE.CanvasTexture, opacity: number) {
 }
 
 function createMaterials(opacity: number): GnmEyeMaterialSet {
-  const left = eyeTexture();
-  const right = eyeTexture();
+  const left = eyeTexture("left");
+  const right = eyeTexture("right");
   return {
     left: eyeMaterial(left, opacity),
     right: eyeMaterial(right, opacity),

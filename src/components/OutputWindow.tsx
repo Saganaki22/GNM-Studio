@@ -8,6 +8,8 @@ import {
   type OutputToMainMessage,
 } from "../lib/outputChannel";
 import type { TrackingFrame } from "../types";
+import { inspectRecordedMedia } from "../lib/mediaInspection";
+import { preferredVideoRecorderMimeType } from "../lib/recordingMedia";
 import "../App.css";
 
 const isDesktopRuntime = "__TAURI_INTERNALS__" in window;
@@ -48,6 +50,7 @@ export function OutputWindow() {
     if (recorderRef.current && recorderRef.current.state !== "inactive") throw new Error("The popout is already recording.");
     const stream = canvas.captureStream(message.fps);
     const currentSnapshot = snapshotRef.current;
+    let expectedAudio = false;
     if (currentSnapshot && !currentSnapshot.settings.muted && navigator.mediaDevices?.getUserMedia) {
       try {
         const microphone = await navigator.mediaDevices.getUserMedia({
@@ -56,15 +59,12 @@ export function OutputWindow() {
             : true,
         });
         microphone.getAudioTracks().forEach((track) => stream.addTrack(track));
+        expectedAudio = stream.getAudioTracks().length > 0;
       } catch (microphoneError) {
         post({ type: "error", operation: "Popout microphone", message: `${String(microphoneError)}. Video recording will continue without audio.` });
       }
     }
-    const mimeTypes = [
-      "video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4;codecs=avc1.42E01E", "video/mp4",
-      "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm",
-    ];
-    const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type)) ?? "video/webm";
+    const mimeType = preferredVideoRecorderMimeType(expectedAudio);
     const recorder = new MediaRecorder(stream, {
       mimeType,
       videoBitsPerSecond: message.videoBitrate,
@@ -73,9 +73,17 @@ export function OutputWindow() {
     chunksRef.current = [];
     recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
     recorder.onerror = (event) => post({ type: "error", operation: "Popout recording", message: event.type });
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       if (chunksRef.current.length) {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType });
+        if (expectedAudio) {
+          try {
+            const tracks = await inspectRecordedMedia(blob);
+            if (!tracks.hasAudio) post({ type: "error", operation: "Popout microphone", message: "The selected recorder codec omitted the microphone track. Choose WebCodecs export or retry with a current WebView2 runtime." });
+          } catch (inspectionError) {
+            post({ type: "error", operation: "Popout recording", message: `Could not verify recorded microphone audio: ${String(inspectionError)}` });
+          }
+        }
         post({ type: "record-result", blob, mimeType: blob.type });
       } else {
         post({ type: "error", operation: "Popout recording", message: "The encoder stopped without producing media data." });
@@ -238,9 +246,12 @@ export function OutputWindow() {
         recordingMode="avatar"
         recordingActive={snapshot.recordingActive}
         resetViewSignal={snapshot.resetViewSignal}
+        viewStateOverride={snapshot.viewState}
         onCancelCalibration={() => undefined}
         onCompositeCanvas={handleCompositeCanvas}
         onStageError={handleStageError}
+        onViewStateChange={(viewState) => post({ type: "view-state", viewState })}
+        onAvatarMotion={(sample, frameTimestamp) => post({ type: "avatar-motion", sample, frameTimestamp })}
       />
       {error && <div className="output-error">{error}</div>}
     </main>

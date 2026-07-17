@@ -1,4 +1,4 @@
-import type { AvatarKind, RecordedFrame, TrackingFrame } from "../types";
+import type { AvatarKind, AvatarMotionSample, CameraViewState, RecordedFrame, TrackingFrame } from "../types";
 
 export type MotionFile = {
   fps: number;
@@ -7,6 +7,7 @@ export type MotionFile = {
   frozenExpressions: Record<string, number>;
   neutral: TrackingFrame | null;
   frames: RecordedFrame[];
+  viewState: CameraViewState | null;
 };
 
 function finiteNumber(value: unknown, field: string) {
@@ -21,6 +22,42 @@ function matrix(value: unknown, field: string) {
     throw new Error(`${field} must contain exactly 16 matrix values.`);
   }
   return value.map((entry, index) => finiteNumber(entry, `${field}[${index}]`));
+}
+
+function tuple(value: unknown, length: number, field: string) {
+  if (!Array.isArray(value) || value.length !== length) throw new Error(`${field} must contain exactly ${length} values.`);
+  return value.map((entry, index) => finiteNumber(entry, `${field}[${index}]`));
+}
+
+function avatarMotion(value: unknown, field: string): AvatarMotionSample | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${field} must be an object.`);
+  const sample = value as Record<string, unknown>;
+  const quaternion = tuple(sample.quaternion, 4, `${field}.quaternion`);
+  return {
+    centerX: finiteNumber(sample.centerX, `${field}.centerX`),
+    centerY: finiteNumber(sample.centerY, `${field}.centerY`),
+    faceHeight: Math.max(0.001, finiteNumber(sample.faceHeight, `${field}.faceHeight`)),
+    position: sample.position === undefined
+      ? undefined
+      : tuple(sample.position, 3, `${field}.position`) as [number, number, number],
+    scale: sample.scale === undefined
+      ? undefined
+      : tuple(sample.scale, 3, `${field}.scale`).map((entry) => Math.max(0.001, entry)) as [number, number, number],
+    quaternion: quaternion as [number, number, number, number],
+  };
+}
+
+function cameraView(value: unknown): CameraViewState | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("viewState must be an object or null.");
+  const view = value as Record<string, unknown>;
+  return {
+    position: tuple(view.position, 3, "viewState.position") as [number, number, number],
+    target: tuple(view.target, 3, "viewState.target") as [number, number, number],
+    up: tuple(view.up, 3, "viewState.up") as [number, number, number],
+    zoom: Math.max(0.01, finiteNumber(view.zoom, "viewState.zoom")),
+  };
 }
 
 function neutralFrame(value: unknown): TrackingFrame | null {
@@ -121,6 +158,7 @@ export function parseMotionFile(value: unknown): MotionFile {
       timestamp,
       blendshapes,
       matrix: matrix(frame.matrix, `frames[${frameIndex}].matrix`),
+      avatarMotion: avatarMotion(frame.avatarMotion, `frames[${frameIndex}].avatarMotion`),
     };
   });
 
@@ -131,5 +169,6 @@ export function parseMotionFile(value: unknown): MotionFile {
     frozenExpressions: expressionRecord(payload.frozenExpressions, "frozenExpressions"),
     neutral: neutralFrame(payload.neutral),
     frames,
+    viewState: cameraView(payload.viewState),
   };
 }

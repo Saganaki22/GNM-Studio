@@ -69,10 +69,15 @@ assert.equal(tongues.length, 1, "GNM runtime must retain a separate tongue shell
 const eyeSource = readFileSync(fileURLToPath(new URL("../src/lib/gnmEyes.ts", import.meta.url)), "utf8");
 for (const marker of [
   "irisRadius = 33.35", "pupilRadius = 14", "installGnmEyeMaterials",
-  "GNM Studio enamel", "GNM Studio tongue",
+  "GNM Studio enamel", "GNM Studio tongue", "gnmNeutralEyeDivergence = 0.006", "gnmGazeDeadZone = 0.055",
 ]) {
   assert.ok(eyeSource.includes(marker), `GNM eye implementation is missing ${marker}`);
 }
+const { gnmEyeTextureOffset } = await import("../src/lib/gnmEyes.ts");
+assert.ok(gnmEyeTextureOffset("left", 0) > 0, "Left neutral iris must shift slightly outward");
+assert.ok(gnmEyeTextureOffset("right", 0) < 0, "Right neutral iris must shift slightly outward");
+assert.equal(gnmEyeTextureOffset("left", 0.04), gnmEyeTextureOffset("left", 0), "Tiny false gaze must stay in the dead zone");
+assert.ok(gnmEyeTextureOffset("left", 0.4) < gnmEyeTextureOffset("left", 0), "Deliberate gaze must remain responsive");
 const stageSource = readFileSync(fileURLToPath(new URL("../src/components/Stage.tsx", import.meta.url)), "utf8");
 assert.ok(stageSource.includes("installGnmEyeMaterials(face"), "GNM Stage does not install eye materials");
 const exportSource = readFileSync(fileURLToPath(new URL("../src/lib/glbExport.ts", import.meta.url)), "utf8");

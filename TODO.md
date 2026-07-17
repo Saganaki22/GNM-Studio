@@ -133,6 +133,19 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] Separate FaceCap upper/lower enamel and oral tissue from skin PBR; separate GNM dental arches and tongue from skin PBR.
 - [x] Complete manual FaceCap, head rotation, web identity, popout, recording, eye, and oral-material tests before publication.
 
+## Version 1.2.1 hotfix
+
+- [x] Record exact display-space head translation, scale, and smoothed rotation with every motion frame.
+- [x] Derive neutral-relative XYZ from calibrated screen translation plus MediaPipe matrix depth and export Blender position/scale tracks.
+- [x] Preserve the recording-time OrbitControls camera position, target, up axis, and zoom during playback and video export.
+- [x] Return exact head-motion samples from the single-renderer popout to the main motion recorder.
+- [x] Prevent MP4 export until MediaRecorder has completed asynchronous finalization.
+- [x] Prefer audio-capable recorder codecs and verify that requested microphone tracks exist in desktop, web, and popout video.
+- [x] Retain motion-mode microphone audio in memory and remux it into the rendered motion video.
+- [x] Preserve backward compatibility with v1 motion JSON while extending new files with avatar motion and view state.
+- [x] Add deterministic recording-pipeline checks for head motion, immutable view framing, finalization, and microphone routing.
+- [x] Correct the slight GNM cross-eyed neutral look with per-eye outward optical centres and a small gaze dead zone.
+
 ## Remaining production work
 
 - [ ] Fit a high-quality 52-to-383 MediaPipe/GNM retargeting matrix from matched landmarks.

@@ -1,4 +1,4 @@
-import type { AppSettings, IdentityVertices, TrackingFrame } from "../types";
+import type { AppSettings, AvatarMotionSample, CameraViewState, IdentityVertices, TrackingFrame } from "../types";
 
 export const outputChannelName = "gnm-studio-output-v1";
 
@@ -13,6 +13,7 @@ export type OutputSnapshot = {
   recordingActive: boolean;
   resetViewSignal: number;
   backgroundImageUrl: string | null;
+  viewState: CameraViewState | null;
 };
 
 export type MainToOutputMessage =
@@ -28,4 +29,6 @@ export type OutputToMainMessage =
   | { type: "heartbeat"; timestamp: number }
   | { type: "closed" }
   | { type: "record-result"; blob: Blob; mimeType: string }
+  | { type: "view-state"; viewState: CameraViewState }
+  | { type: "avatar-motion"; sample: AvatarMotionSample; frameTimestamp: number }
   | { type: "error"; operation: string; message: string };

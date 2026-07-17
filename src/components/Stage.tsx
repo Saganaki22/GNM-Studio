@@ -10,16 +10,22 @@ import {
   createFacecapMouthMaterials, normalizeFacecapSkinUvs, splitFacecapMouthMaterials,
 } from "../lib/facecapModel";
 import { installFacecapPupils } from "../lib/facecapEyes";
-import { disposeGnmEyeMaterials, installGnmEyeMaterials, type GnmEyeMaterialSet } from "../lib/gnmEyes";
+import {
+  disposeGnmEyeMaterials, gnmEyeTextureOffset, installGnmEyeMaterials, type GnmEyeMaterialSet,
+} from "../lib/gnmEyes";
 import { configureFacecapLoader } from "../lib/ktx2";
 import { flattenIdentityVertices } from "../lib/identityVertices";
 import { projectCoverPoint } from "../lib/coverProjection";
+import { neutralRelativeMatrixPosition } from "../lib/avatarMotion";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   skinDisplacementScale,
   type SkinTextureSet,
 } from "../lib/skinMaterial";
-import type { AvatarKind, BackgroundMode, FaceAlignment, HeadPoseSettings, IdentityVertices, RecordingMode, SkinTone, TrackingFrame } from "../types";
+import type {
+  AvatarKind, AvatarMotionSample, BackgroundMode, CameraViewState, FaceAlignment,
+  HeadPoseSettings, IdentityVertices, RecordingMode, SkinTone, TrackingFrame,
+} from "../types";
 
 type Props = {
   avatarKind: AvatarKind;
@@ -55,11 +61,35 @@ type Props = {
   recordingMode: RecordingMode;
   recordingActive: boolean;
   resetViewSignal: number;
+  viewStateOverride?: CameraViewState | null;
   onCancelCalibration: () => void;
   onCompositeCanvas: (canvas: HTMLCanvasElement | null) => void;
   onStageError: (message: string) => void;
   onViewportResize?: (width: number, height: number) => void;
+  onViewStateChange?: (view: CameraViewState) => void;
+  onAvatarMotion?: (sample: AvatarMotionSample, frameTimestamp: number) => void;
 };
+
+function projectedFaceMetrics(
+  frame: TrackingFrame,
+  video: HTMLVideoElement | null,
+  width: number,
+  height: number,
+  mirror: boolean,
+) {
+  const projected = (frame.poseLandmarks ?? frame.landmarks).map((point) => projectCoverPoint(
+    video, width, height, point.x, point.y, mirror,
+  ));
+  const xs = projected.map((point) => point.x);
+  const ys = projected.map((point) => point.y);
+  const minX = Math.min(...xs); const maxX = Math.max(...xs);
+  const minY = Math.min(...ys); const maxY = Math.max(...ys);
+  return {
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2,
+    faceHeight: Math.max(0.1, (maxY - minY) / height),
+  };
+}
 
 export function Stage({
   avatarKind,
@@ -95,10 +125,13 @@ export function Stage({
   recordingMode,
   recordingActive,
   resetViewSignal,
+  viewStateOverride,
   onCancelCalibration,
   onCompositeCanvas,
   onStageError,
   onViewportResize,
+  onViewStateChange,
+  onAvatarMotion,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const landmarkRef = useRef<HTMLCanvasElement>(null);
@@ -123,12 +156,42 @@ export function Stage({
   const eyeLRef = useRef<THREE.Object3D | null>(null);
   const eyeRRef = useRef<THREE.Object3D | null>(null);
   const gnmEyeMaterialsRef = useRef<GnmEyeMaterialSet | null>(null);
+  const viewStateOverrideRef = useRef(viewStateOverride);
+  const onViewStateChangeRef = useRef(onViewStateChange);
+  const onAvatarMotionRef = useRef(onAvatarMotion);
   const [modelReady, setModelReady] = useState(false);
 
   displayOptionsRef.current = { showWebcam, showAvatar, showLandmarks, mirror, recordingMode, recordingActive, backgroundMode, backgroundColor, backgroundImageZoom };
   mouseLightBoundRef.current = mouseLightBound;
   opacityRef.current = opacity;
   skinTransformRef.current = { scale: skinTextureScale, rotation: skinTextureRotation };
+  viewStateOverrideRef.current = viewStateOverride;
+  onViewStateChangeRef.current = onViewStateChange;
+  onAvatarMotionRef.current = onAvatarMotion;
+
+  const applyCameraView = (view: CameraViewState | null | undefined) => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!view || !camera || !controls) return;
+    camera.position.fromArray(view.position);
+    camera.up.fromArray(view.up);
+    camera.zoom = THREE.MathUtils.clamp(view.zoom, controls.minZoom, controls.maxZoom);
+    controls.target.fromArray(view.target);
+    camera.updateProjectionMatrix();
+    controls.update();
+  };
+
+  const emitCameraView = () => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    onViewStateChangeRef.current?.({
+      position: camera.position.toArray() as [number, number, number],
+      target: controls.target.toArray() as [number, number, number],
+      up: camera.up.toArray() as [number, number, number],
+      zoom: camera.zoom,
+    });
+  };
 
   useEffect(() => {
     backgroundImageRef.current = null;
@@ -182,6 +245,10 @@ export function Stage({
   useEffect(() => {
     if (resetViewSignal > 0) setCameraView("front", true);
   }, [resetViewSignal]);
+
+  useEffect(() => {
+    applyCameraView(viewStateOverride);
+  }, [viewStateOverride]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -238,6 +305,10 @@ export function Stage({
     controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
     controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+    const reportView = () => emitCameraView();
+    controls.addEventListener("change", reportView);
+    if (viewStateOverrideRef.current) applyCameraView(viewStateOverrideRef.current);
+    else emitCameraView();
     const chooseLeftGesture = (event: PointerEvent) => {
       controls.mouseButtons.LEFT = event.shiftKey ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
     };
@@ -412,6 +483,7 @@ export function Stage({
       renderer.domElement.removeEventListener("pointerdown", chooseLeftGesture, true);
       renderer.domElement.removeEventListener("pointermove", moveMouseLight);
       window.removeEventListener("pointerup", restoreLeftGesture);
+      controls.removeEventListener("change", reportView);
       controls.dispose();
       controlsRef.current = null;
       mouseLightRef.current = null;
@@ -584,34 +656,53 @@ export function Stage({
     const face = faceRef.current;
     if (!root || !face) return;
 
-    if (frame) {
+    if (frame?.avatarMotion) {
       const host = hostRef.current;
       const width = host?.clientWidth ?? 1;
       const height = host?.clientHeight ?? 1;
-      const projected = (frame.poseLandmarks ?? frame.landmarks).map((point) => projectCoverPoint(
-        videoRef.current,
-        width,
-        height,
-        point.x,
-        point.y,
-        mirror,
-      ));
-      const xs = projected.map((point) => point.x);
-      const ys = projected.map((point) => point.y);
-      const minX = Math.min(...xs); const maxX = Math.max(...xs);
-      const minY = Math.min(...ys); const maxY = Math.max(...ys);
-      const centerX = (minX + maxX) / 2;
-      const centerY = (minY + maxY) / 2;
+      const sample = frame.avatarMotion;
+      const aspect = width / Math.max(1, height);
+      root.position.set(
+        (sample.centerX * 2 - 1) * aspect,
+        1 - sample.centerY * 2,
+        sample.position?.[2] ?? 0,
+      );
+      root.scale.setScalar(Math.max(0.1, sample.faceHeight) * 2.55);
+      const pose = new THREE.Quaternion().fromArray(sample.quaternion).normalize();
+      headPoseRef.current.copy(pose);
+      root.quaternion.copy(pose);
+    } else if (frame) {
+      const host = hostRef.current;
+      const width = host?.clientWidth ?? 1;
+      const height = host?.clientHeight ?? 1;
+      const metrics = projectedFaceMetrics(frame, videoRef.current, width, height, mirror);
+      const { centerX, centerY, faceHeight } = metrics;
+      const relativePosition = neutralRelativeMatrixPosition(frame, neutralFrame, mirror);
       const aspect = width / height;
       root.position.x = (centerX / width * 2 - 1) * aspect;
       root.position.y = 1 - centerY / height * 2;
-      root.position.z = 0;
-      const faceHeight = Math.max(0.1, (maxY - minY) / height);
+      root.position.z = relativePosition?.[2] ?? 0;
       root.scale.setScalar(faceHeight * 2.55);
+
+      const neutralMetrics = neutralFrame
+        ? projectedFaceMetrics(neutralFrame, videoRef.current, width, height, mirror)
+        : null;
+      const relativeScale = neutralMetrics ? faceHeight / Math.max(0.001, neutralMetrics.faceHeight) : 1;
 
       const pose = resolveHeadPose(frame, neutralFrame, mirror, headPoseSettings, headPoseRef.current);
       headPoseRef.current.copy(pose);
       root.quaternion.copy(pose);
+      onAvatarMotionRef.current?.(
+        {
+          centerX: centerX / width,
+          centerY: centerY / height,
+          faceHeight,
+          position: relativePosition ?? [root.position.x, root.position.y, root.position.z],
+          scale: [relativeScale, relativeScale, relativeScale],
+          quaternion: pose.toArray() as [number, number, number, number],
+        },
+        frame.timestamp,
+      );
     }
 
     const eye = { lH: 0, rH: 0, lV: 0, rV: 0 };
@@ -650,8 +741,8 @@ export function Stage({
     if (eyeLRef.current) eyeLRef.current.rotation.set(eye.lV * limit, 0, eye.lH * limit);
     if (eyeRRef.current) eyeRRef.current.rotation.set(eye.rV * limit, 0, eye.rH * limit);
     if (avatarKind === "gnm" && gnmEyeMaterialsRef.current) {
-      gnmEyeMaterialsRef.current.textures.left.offset.set(-eye.lH * 0.04, -eye.lV * 0.04);
-      gnmEyeMaterialsRef.current.textures.right.offset.set(-eye.rH * 0.04, -eye.rV * 0.04);
+      gnmEyeMaterialsRef.current.textures.left.offset.set(gnmEyeTextureOffset("left", eye.lH), -eye.lV * 0.04);
+      gnmEyeMaterialsRef.current.textures.right.offset.set(gnmEyeTextureOffset("right", eye.rH), -eye.rV * 0.04);
     }
   }, [avatarKind, frame, frozenExpressions, headPoseSettings, manualExpressions, mirror, modelReady, neutralFrame, videoRef]);
 

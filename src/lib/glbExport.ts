@@ -169,17 +169,37 @@ export async function createAnimatedGlb(
       blendshapes: [],
       matrix: frame.matrix,
     };
-    const quaternion = resolveHeadPose(
-      trackingFrame,
-      options.neutralFrame ?? null,
-      options.mirror ?? false,
-      options.headPose ?? defaultHeadPose,
-      previousQuaternion,
-    );
+    const quaternion = frame.avatarMotion
+      ? new THREE.Quaternion().fromArray(frame.avatarMotion.quaternion).normalize()
+      : resolveHeadPose(
+        trackingFrame,
+        options.neutralFrame ?? null,
+        options.mirror ?? false,
+        options.headPose ?? defaultHeadPose,
+        previousQuaternion,
+      );
     previousQuaternion = quaternion;
     quaternion.toArray(quaternionValues, index * 4);
   });
   tracks.push(new THREE.QuaternionKeyframeTrack("GNM_Studio_Performance.quaternion", times, quaternionValues));
+  const positionValues = new Float32Array(frames.length * 3);
+  const scaleValues = new Float32Array(frames.length * 3);
+  const firstPosition = frames.find((frame) => frame.avatarMotion?.position)?.avatarMotion?.position ?? [0, 0, 0];
+  const firstFaceHeight = Math.max(0.001, frames.find((frame) => frame.avatarMotion)?.avatarMotion?.faceHeight ?? 1);
+  frames.forEach((frame, index) => {
+    const position = frame.avatarMotion?.position ?? [0, 0, 0];
+    const exportedPosition = options.neutralFrame
+      ? position
+      : position.map((value, axis) => value - firstPosition[axis]);
+    positionValues.set(exportedPosition, index * 3);
+    const fallbackScale = frame.avatarMotion ? frame.avatarMotion.faceHeight / firstFaceHeight : 1;
+    const scale = options.neutralFrame && frame.avatarMotion?.scale
+      ? frame.avatarMotion.scale
+      : [fallbackScale, fallbackScale, fallbackScale];
+    scaleValues.set(scale, index * 3);
+  });
+  tracks.push(new THREE.VectorKeyframeTrack("GNM_Studio_Performance.position", times, positionValues));
+  tracks.push(new THREE.VectorKeyframeTrack("GNM_Studio_Performance.scale", times, scaleValues));
 
   const clip = new THREE.AnimationClip(`${profile.shortLabel} Capture`, -1, tracks);
   const exporter = new GLTFExporter();

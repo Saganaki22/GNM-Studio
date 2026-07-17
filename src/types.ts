@@ -1,5 +1,25 @@
 export type Landmark = { x: number; y: number; z: number };
 
+export type AvatarMotionSample = {
+  /** Display-space values after camera cover-cropping and mirroring. */
+  centerX: number;
+  centerY: number;
+  faceHeight: number;
+  /** Neutral-relative scene translation, including camera-depth Z. */
+  position?: [number, number, number];
+  /** Neutral-relative uniform scale for editable 3D export. */
+  scale?: [number, number, number];
+  /** The exact smoothed head pose shown by the live Stage. */
+  quaternion: [number, number, number, number];
+};
+
+export type CameraViewState = {
+  position: [number, number, number];
+  target: [number, number, number];
+  up: [number, number, number];
+  zoom: number;
+};
+
 export type Blendshape = {
   name: string;
   score: number;
@@ -11,6 +31,7 @@ export type TrackingFrame = {
   poseLandmarks?: Landmark[];
   blendshapes: Blendshape[];
   matrix: number[];
+  avatarMotion?: AvatarMotionSample;
 };
 
 export type FaceAlignment = {
@@ -25,6 +46,7 @@ export type RecordedFrame = {
   timestamp: number;
   blendshapes: Record<string, number>;
   matrix: number[];
+  avatarMotion?: AvatarMotionSample;
 };
 
 export type IdentityVertices = number[][] | Float32Array;

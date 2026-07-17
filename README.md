@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.0-54ddb2" alt="Release v1.2.0"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.1-54ddb2" alt="Release v1.2.1"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages web edition"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 and React">
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/e1449cad-ea74-4912-b77a-a0effe41c102
 
 Author: [Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.2.0` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
+GNM Studio `1.2.1` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
 Three.js, Rust, and Tauri in a portable Windows application, with a companion
 GitHub Pages edition for trying the tracking and animation workflow online. It
 can drive a head from a webcam, record facial motion and video, and export
@@ -42,7 +42,7 @@ quantized basis in a dedicated worker so the interface stays responsive.
 1. Download the latest Windows x64 archive from
    [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases).
 2. Extract it to a writable folder such as `C:\AI\GNM-Studio\`.
-3. Run `GNM-Studio-v1.2.0.exe`.
+3. Run `GNM-Studio-v1.2.1.exe`.
 4. Approve camera and/or microphone access if you want live capture, or choose
    **Continue without capture** for manual avatar work.
 5. For tracked performances, hold a neutral expression and use **Calibrate neutral**.
@@ -51,8 +51,8 @@ Two portable archives may be published:
 
 | Package | Use it when |
 | --- | --- |
-| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.0/GNM-Studio-1.2.0-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
-| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.0/GNM-Studio-1.2.0-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
+| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.1/GNM-Studio-1.2.1-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
+| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.2.1/GNM-Studio-1.2.1-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
 
 The application and all model assets are embedded. No installer is required.
 
@@ -133,9 +133,10 @@ lives at its `GNM-Studio` subpath.
 - Power-user video bitrate (1–50 Mbps) and audio bitrate (64–320 kbps) controls.
 - Auto, portable WebCodecs, or optional system FFmpeg MP4 backends. FFmpeg can
   be found through PATH or selected as an executable and is never required.
-- Motion recording, pause/resume, seekable playback, an explicit Return to Live
-  control, validated JSON re-import, copyable detailed error messages, and one
-  aligned desktop row for transport, timeline, FPS, import, and export controls.
+- Motion recording with exact per-frame neutral-relative XYZ translation, scale,
+  smoothed rotation, and recorded 3D camera framing; retained microphone audio; pause/resume,
+  seekable playback, an explicit Return to Live control, validated JSON
+  re-import, copyable detailed errors, and one aligned desktop transport row.
 - Dark/light themes, five accents, and persistent 80–125% interface scaling.
 - Native default-browser links for GitHub and Releases.
 
@@ -194,21 +195,24 @@ installation, Microsoft WebView2 may need to be installed separately.
 ## Recording and Export
 
 **Capture mode** controls what the Record button stores; it does not change the
-live viewport. **Motion data** records editable tracking channels for JSON/GLB
-and can now be rendered locally into a silent avatar MP4 after recording.
-**Avatar video** records only the rendered head/background, and **Camera +
-avatar** records the enabled layers as one composited video. Microphone audio is
-included in video modes unless muted.
+live viewport. **Motion data** records editable tracking channels together with
+the exact displayed head framing, neutral-relative XYZ translation, scale,
+smoothed rotation, and 3D camera view.
+It can be rendered locally into an avatar MP4 after recording, including the
+microphone captured during that session unless muted. **Avatar video** records
+only the rendered head/background, and **Camera + avatar** records the enabled
+layers as one composited video. Direct video modes also include the microphone
+unless muted, and the completed source is reused without re-recording.
 
 | Format | Contents | Typical use |
 | --- | --- | --- |
-| JSON | Timestamped MediaPipe channels, selected avatar profile, manual/frozen controls, neutral calibration, and head matrix | Re-import, custom retargeting, or analysis |
-| GLB | Selected GNM or FaceCap mesh, skin material, morph targets, face-only head pose, and animation | Blender, glTF tools, editing |
+| JSON | Timestamped MediaPipe channels, neutral-relative XYZ/scale, exact avatar framing/pose, recorded 3D view, avatar profile, controls, neutral calibration, and head matrix | Re-import, custom retargeting, or analysis |
+| GLB | Selected GNM or FaceCap mesh, skin material, morph targets, XYZ position, scale, face-only rotation, and animation | Blender, glTF tools, editing |
 | MP4 | H.264 video rendered from motion, or direct video with up to 320 kbps AAC | Sharing and editing |
 | WebM source | Optional unconverted source when WebView2 recorded WebM internally | Diagnostics or archival |
 
 For Blender, animated GLB is the recommended editable export. Import it with
-**File → Import → glTF 2.0**. Alembic export is not part of `1.2.0`.
+**File → Import → glTF 2.0**. Alembic export is not part of `1.2.1`.
 Export defaults include local date and time down to seconds, for example
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`.
 
@@ -412,10 +416,12 @@ transcodes it to H.264/AAC with WebCodecs. If H.264 itself is unavailable, updat
 Microsoft Edge WebView2 and retry; the optional WebM source remains exportable.
 
 The MP4 button activates after either a motion take or a direct video take exists.
-For **Motion data**, clicking MP4 plays the avatar once in real time and captures a
-silent video, so keep the app or browser tab visible until rendering completes.
-Choose **Avatar video** or **Camera + avatar** before recording when microphone
-audio must be preserved.
+For **Motion data**, clicking MP4 plays the avatar once in real time using the
+recorded head position, scale, rotation, and 3D camera framing, so keep the app
+or browser tab visible until rendering completes. If the microphone was active
+and not muted, its retained audio is included and verified before export.
+Direct **Avatar video** and **Camera + avatar** takes reuse their completed source
+without re-recording. Wait for the brief **Finalizing…** state to finish first.
 
 Power users may select **System FFmpeg** under **Encoder quality**. Enter `ffmpeg`
 to use PATH or choose `ffmpeg.exe`. Auto uses a detected FFmpeg installation and

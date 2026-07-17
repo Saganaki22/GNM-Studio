@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.0-54ddb2" alt="版本 v1.2.0"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.2.1-54ddb2" alt="版本 v1.2.1"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages 网页版"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 与 React">
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/874bc735-c11d-4ae6-9cdc-2db1082d2a5b
 
 作者：[Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.2.0` 将 Google GNM Head v3、MIT FaceCap 52 头像、MediaPipe Face Landmarker、
+GNM Studio `1.2.1` 将 Google GNM Head v3、MIT FaceCap 52 头像、MediaPipe Face Landmarker、
 Three.js、Rust 与 Tauri 整合到便携式 Windows 应用，并提供用于在线体验跟踪与
 动画流程的 GitHub Pages 版本。它可通过摄像头驱动头像、录制面部动作和视频，
 并把动画导出到 Blender。普通用户无需安装 Python、Node.js、Rust 或 CUDA；
@@ -40,7 +40,7 @@ Worker 中计算紧凑的量化基底，从而避免阻塞界面。
 1. 从 [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases)
    下载最新的 Windows x64 压缩包。
 2. 解压到可写目录，例如 `C:\AI\GNM-Studio\`。
-3. 运行 `GNM-Studio-v1.2.0.exe`。
+3. 运行 `GNM-Studio-v1.2.1.exe`。
 4. 如需实时捕捉，请允许摄像头和/或麦克风权限；手动编辑可选择
    **Continue without capture**。
 5. 跟踪录制前保持放松的中性表情，并点击 **Calibrate neutral**。
@@ -110,9 +110,9 @@ MP4 能力取决于浏览器编码器。身份基底只会在首次应用 Create
 - 面向高级用户的 1–50 Mbps 视频码率和 64–320 kbps 音频码率控制。
 - MP4 后端可选 Auto、便携 WebCodecs 或系统 FFmpeg。可从 PATH 检测或手动选择
   `ffmpeg.exe`，且 FFmpeg 并非必需。
-- 动作录制、暂停/继续、可拖动定位的回放、明确的 Return to Live 按钮、经过验证的
-  JSON 重新导入、可复制的详细错误信息，以及在桌面版同一基线上排列的录制、时间轴、
-  FPS、导入与导出控件。
+- 动作录制会保存每帧精确的中性相对 XYZ 位移、缩放、平滑旋转与录制时的 3D 相机视图，并保留
+  麦克风音频；另有暂停/继续、可拖动定位的回放、Return to Live、经过验证的 JSON
+  重新导入、可复制的详细错误信息，以及同一基线上的桌面录制与导出控件。
 - 深色/浅色主题、五种强调色、可持久保存的 80–125% 界面缩放。
 - GitHub 与版本链接始终通过 Windows 默认浏览器打开，而不是应用 WebView。
 
@@ -166,19 +166,20 @@ Windows 版在运行时**不会下载模型**。发布版 EXE 已包含：
 ## 录制与导出
 
 **Capture mode** 决定 Record 按钮保存什么，不会改变实时视口。**Motion data**
-记录可编辑的跟踪通道用于 JSON/GLB，录制后也可以在本地渲染为无声头像 MP4；
-**Avatar video** 只录制渲染头像和背景；
-**Camera + avatar** 把已启用的图层合成为一个视频。视频模式会录入麦克风，除非静音。
+会记录可编辑跟踪通道、精确的中性相对 XYZ 位移/缩放/平滑旋转、画面构图，以及录制时的 3D 相机视图；
+之后可在本地渲染为头像 MP4，并包含该会话保留的麦克风音频（除非静音）。
+**Avatar video** 只录制渲染头像和背景；**Camera + avatar** 把已启用图层合成为一个视频。
+直接视频也会录入麦克风（除非静音），并在导出时复用已完成的视频，无需重新录制。
 
 | 格式 | 内容 | 常见用途 |
 | --- | --- | --- |
-| JSON | 带时间戳的 MediaPipe 通道、头像配置、手动/冻结控制、中性校准和头部矩阵 | 重新导入、自定义重定向或分析 |
-| GLB | 所选 GNM 或 FaceCap 网格、皮肤材质、形变目标、面部头部姿态和动画 | Blender、glTF 工具、后期编辑 |
+| JSON | 带时间戳的 MediaPipe 通道、中性相对 XYZ/缩放、精确头像构图/姿态、录制时 3D 视图、头像配置、控制、中性校准和头部矩阵 | 重新导入、自定义重定向或分析 |
+| GLB | 所选 GNM 或 FaceCap 网格、皮肤材质、形变目标、XYZ 位置、缩放、面部头部旋转和动画 | Blender、glTF 工具、后期编辑 |
 | MP4 | 从动作渲染的 H.264 视频，或带最高 320 kbps AAC 的直接录制视频 | 分享与剪辑 |
 | WebM 源文件 | WebView2 内部录制 WebM 时可选保存的未转换源文件 | 诊断或归档 |
 
 Blender 可编辑动画推荐使用 GLB。通过 **File → Import → glTF 2.0** 导入。
-`1.2.0` 暂不包含 Alembic 导出。
+`1.2.1` 暂不包含 Alembic 导出。
 默认导出文件名包含精确到秒的本地日期与时间，例如
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`。
 
@@ -361,8 +362,10 @@ WebM 源文件，再使用 WebCodecs 在本地转换为 H.264/AAC。若系统没
 请更新 Microsoft Edge WebView2 后重试；仍可导出可选的 WebM 源文件。
 
 只要已有动作录制或直接视频录制，MP4 按钮就会启用。对于 **Motion data**，点击
-MP4 会实时播放一次头像并录制无声视频，因此完成前请保持应用或浏览器标签页可见。
-若需要保留麦克风音频，请在录制前选择 **Avatar video** 或 **Camera + avatar**。
+MP4 会按已录制的头像位置、缩放、旋转和 3D 相机构图实时播放一次，因此完成前请保持
+应用或浏览器标签页可见。若麦克风已启用且未静音，保留的音频会加入并在导出前验证。
+直接 **Avatar video** 与 **Camera + avatar** 会复用已完成的视频，无需重新录制；
+请先等待短暂的 **Finalizing…** 状态结束。
 
 高级用户可在 **Encoder quality** 中选择 **System FFmpeg**。输入 `ffmpeg` 使用
 PATH，或手动选择 `ffmpeg.exe`。Auto 会优先使用检测到的 FFmpeg，否则回退到
