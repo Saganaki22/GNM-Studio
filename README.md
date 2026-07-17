@@ -49,8 +49,8 @@ Two portable archives may be published:
 
 | Package | Use it when |
 | --- | --- |
-| Standard portable ZIP | Recommended. Best compatibility with antivirus and code signing. |
-| Portable UPX ZIP | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
+| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.0.1/GNM-Studio-1.0.1-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
+| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.0.1/GNM-Studio-1.0.1-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
 
 The application and all model assets are embedded. No installer is required.
 
@@ -67,11 +67,6 @@ backgrounds, motion/video recording, playback, JSON import/export, animated GLB
 export, and browser-based MP4/WebM saving. Browser codec support determines MP4
 availability. Native seeded identity evaluation and system FFmpeg are desktop
 only because they use the Rust/Tauri process.
-
-The project is deliberately built with the `/GNM-Studio/` base path so it works
-below the existing custom-domain root. This project does not publish a `CNAME`
-file because `drbaph.is-a.dev` belongs to the parent Pages site, while this app
-lives at its `GNM-Studio` subpath.
 
 ## Features
 
@@ -109,7 +104,6 @@ lives at its `GNM-Studio` subpath.
 - Motion recording, pause/resume, seekable playback, an explicit Return to Live
   control, validated JSON re-import, and copyable detailed error messages.
 - Dark/light themes, five accents, and persistent 80–125% interface scaling.
-- Native default-browser links for GitHub and Releases.
 
 ## Offline and Privacy
 
