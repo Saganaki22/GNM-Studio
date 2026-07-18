@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const app = [
   "../src/App.tsx",
   "../src/features/shell/StudioTopBar.tsx",
+  "../src/features/shell/useStudioControls.ts",
   "../src/features/capture/useCaptureDevices.ts",
   "../src/features/capture/useAudioMonitor.ts",
   "../src/features/output/useOutputPopout.ts",
@@ -13,7 +14,7 @@ const app = [
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
 for (const marker of [
-  'aria-keyshortcuts="P"', 'event.key.toLowerCase() !== "p"', "capturePausedRef.current = paused",
+  'aria-keyshortcuts="P"', 'event.key.toLowerCase() !== "p"', "pausedRef.current = paused",
   "track.enabled = !paused", "setAudioLevel(0)", "setAudioPeak(0)",
   'action: paused ? "pause" : "resume"', 'setState("paused")', 'setState("recording")',
 ]) assert.ok(app.includes(marker), `Pause/resume path is missing ${marker}`);

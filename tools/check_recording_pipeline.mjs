@@ -94,8 +94,10 @@ const app = [
   "../src/features/tracking/useFaceTracker.ts",
   "../src/features/recording/useRecordingSession.ts",
   "../src/features/recording/usePlayback.ts",
+  "../src/features/recording/useRecordedAppearance.ts",
   "../src/features/export/useStudioExport.ts",
   "../src/features/export/motionVideoRenderer.ts",
+  "../src/features/stage/useStageOutputSync.ts",
 ]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
@@ -108,7 +110,7 @@ for (const marker of [
   "renderAudioContext.createMediaStreamDestination()",
   "captureRecordedTakeSnapshot({",
   "appearanceRef.current",
-  "const stageSettings = stageAppearance?.settings ?? settings",
+  "const settings = appearance?.settings ?? options.settings",
   "smoothed.mouthOpen = mouthOpenGateRef.current.update(",
 ]) assert.ok(app.includes(marker), `Recording pipeline is missing ${marker}`);
 assert.ok(app.includes("captureFinalizing || motionVideoRendering"), "Recorded appearance must remain frozen through asynchronous recorder finalization");

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AvatarAppearancePanels } from "./features/avatar/AvatarAppearancePanels";
 import { AvatarModelPanel } from "./features/avatar/AvatarModelPanel";
@@ -9,6 +9,7 @@ import { useStudioSettings } from "./features/settings/useStudioSettings";
 import { RightSidebar } from "./features/stage/RightSidebar";
 import { StudioViewport } from "./features/stage/StudioViewport";
 import { useStagePresentation } from "./features/stage/useStagePresentation";
+import { useStageOutputSync } from "./features/stage/useStageOutputSync";
 import { DeviceAccessPrompt } from "./features/devices/DeviceAccessPrompt";
 import { useCaptureDevices } from "./features/capture/useCaptureDevices";
 import { ExpressionPanel } from "./features/expression/ExpressionPanel";
@@ -21,29 +22,29 @@ import { useOutputPopout } from "./features/output/useOutputPopout";
 import { TransportDock } from "./features/recording/TransportDock";
 import { usePlayback } from "./features/recording/usePlayback";
 import { useRecordingSession } from "./features/recording/useRecordingSession";
+import { useRecordedAppearance } from "./features/recording/useRecordedAppearance";
 import { useFfmpegEncoder } from "./features/export/useFfmpegEncoder";
 import { useSaveFeedback } from "./features/export/useSaveFeedback";
 import { useStudioExport } from "./features/export/useStudioExport";
 import { LeftSidebar } from "./features/shell/LeftSidebar";
 import { StudioFileInputs } from "./features/shell/StudioFileInputs";
 import { StudioTopBar } from "./features/shell/StudioTopBar";
+import { useStudioMetadata } from "./features/shell/useStudioMetadata";
+import { useStudioDerivedState } from "./features/shell/useStudioDerivedState";
+import { useStudioControls } from "./features/shell/useStudioControls";
 import { BackendMenu } from "./features/tracking/BackendMenu";
 import { useFaceTracker } from "./features/tracking/useFaceTracker";
 import { useNeutralCalibration } from "./features/tracking/useNeutralCalibration";
 import { useToasts } from "./features/toasts/useToasts";
 import { ToastCenter } from "./components/ToastCenter";
-import { avatarProfiles, facecapInfluences } from "./lib/avatarProfiles";
-import type { MainToOutputCommand, OutputSnapshot } from "./lib/outputChannel";
-import { semanticInfluences } from "./lib/retarget";
-import {
-  captureRecordedTakeSnapshot, recordingAppearanceSettingKeys,
-} from "./lib/recordingAppearance";
+import { avatarProfiles } from "./lib/avatarProfiles";
+import type { MainToOutputCommand } from "./lib/outputChannel";
+import { recordingAppearanceSettingKeys } from "./lib/recordingAppearance";
 import type {
   AppSettings,
   RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
 } from "./types";
 import { trimAndRetimeMotion } from "./lib/motionEdit";
-import { applyNeutralBaseline, estimateTrackingQuality } from "./lib/trackingFrames";
 import { isDesktopRuntime, isWebEdition, manualJointGroups, type Workspace } from "./app/studioConfig";
 import "./App.css";
 
@@ -56,7 +57,6 @@ type OutputRecordingBridge = {
 };
 
 function App() {
-  const [gnmInfo, setGnmInfo] = useState<{ vertices: number; identityDimensions: number; expressionDimensions: number } | null>(null);
   const [manualExpressions, setManualExpressions] = useState<Record<string, number>>({});
   const [frozenExpressions, setFrozenExpressions] = useState<Record<string, number>>({});
   const {
@@ -75,8 +75,8 @@ function App() {
   const [activePanel, setActivePanel] = useState<"avatar" | "capture">(isWebEdition ? "capture" : "avatar");
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>(isWebEdition ? "capture" : "create");
   const { fullscreen, controlsHidden: outputControlsHidden, scheduleControls: scheduleOutputControls, toggle: toggleFullscreen } = useFullscreenControls(settings, setDeviceError);
-  const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const { toasts, pushToast, dismissToast } = useToasts();
+  const { gnmInfo, appVersion } = useStudioMetadata({ deviceError, onToast: pushToast, onError: setDeviceError });
   const recordingStateGetterAdapterRef = useRef<() => "idle" | "recording" | "paused">(() => "idle");
   const isRecordingIdle = useCallback(() => recordingStateGetterAdapterRef.current() === "idle", []);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -123,7 +123,6 @@ function App() {
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const motionInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
-  const capturePausedRef = useRef(capturePaused);
   const neutralFrameGetterAdapterRef = useRef<() => TrackingFrame | null>(() => null);
   const playbackLandmarkGetterAdapterRef = useRef<() => { x: number; y: number; z: number }[]>(() => []);
   const recordingFinalizingGetterAdapterRef = useRef<() => boolean>(() => false);
@@ -138,7 +137,6 @@ function App() {
     stop: () => {},
   });
 
-  capturePausedRef.current = capturePaused;
 
   const getPlaybackFrames = useCallback(() => {
     const currentFrames = recordedFramesGetterAdapterRef.current();
@@ -207,39 +205,6 @@ function App() {
     recordedAppearanceGetterAdapterRef.current()?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? []
   );
 
-  useEffect(() => {
-    const suppressContextMenu = (event: MouseEvent) => event.preventDefault();
-    window.addEventListener("contextmenu", suppressContextMenu);
-    return () => window.removeEventListener("contextmenu", suppressContextMenu);
-  }, []);
-
-  useEffect(() => {
-    if (!deviceError) return;
-    pushToast({
-      type: "error",
-      title: "GNM Studio needs attention",
-      message: "The last operation could not be completed. Review the details below and retry.",
-      detail: deviceError,
-      duration: 0,
-    });
-  }, [deviceError, pushToast]);
-
-  useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
-    import("@tauri-apps/api/core")
-      .then(({ invoke }) => invoke<{ vertices: number; identityDimensions: number; expressionDimensions: number }>("gnm_model_info"))
-      .then(setGnmInfo)
-      .catch((error) => setDeviceError(`GNM runtime: ${String(error)}`));
-  }, []);
-
-  useEffect(() => {
-    if (!("__TAURI_INTERNALS__" in window)) return;
-    import("@tauri-apps/api/app")
-      .then(({ getVersion }) => getVersion())
-      .then(setAppVersion)
-      .catch((error) => setDeviceError(`App manifest version: ${String(error)}`));
-  }, []);
-
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     if ((recordingStateGetterAdapterRef.current() !== "idle" || recordingFinalizingGetterAdapterRef.current() || exportBusyAdapterRef.current()) && recordingAppearanceSettingKeys.has(key)) {
       pushToast({
@@ -271,6 +236,38 @@ function App() {
     onError: setDeviceError,
   });
 
+  const appearance = useRecordedAppearance({
+    settings,
+    identity: {
+      vertices: identityVertices,
+      parameters: {
+        seed: identitySeed,
+        presentation: identityGender,
+        population: identityEthnicity,
+        presentationStrength: identityPresentationStrength,
+        populationWeights: identityPopulationWeights,
+      },
+      weights: identityWeights,
+    },
+    expression: {
+      gnmWeights: gnmExpressionWeights,
+      gnmFrozen: gnmFrozenExpressionComponents,
+      manual: manualExpressions,
+      frozen: frozenExpressions,
+    },
+    neutralFrame,
+    backgroundImageUrl,
+    getViewState: getCurrentViewState,
+    restoreGnmState,
+    restoreNeutralFrame: calibration.restoreNeutralFrame,
+    setSettings,
+    setAvatarKind: (avatarKind) => updateSetting("avatarKind", avatarKind),
+    setManual: setManualExpressions,
+    setFrozen: setFrozenExpressions,
+    setViewState: setForcedViewState,
+    adoptBackgroundImageUrl,
+  });
+
   const recording = useRecordingSession({
     settings,
     trackingFrame,
@@ -280,55 +277,9 @@ function App() {
     backgroundImageUrl,
     getCanvas: getStageCanvas,
     cloneAudioTrack: captureDevices.cloneAudioTrack,
-    captureAppearance: () => captureRecordedTakeSnapshot({
-      settings,
-      identityVertices,
-      identityParameters: {
-        seed: identitySeed,
-        presentation: identityGender,
-        population: identityEthnicity,
-        presentationStrength: identityPresentationStrength,
-        populationWeights: identityPopulationWeights,
-      },
-      identityWeights,
-      gnmExpressionWeights,
-      gnmFrozenExpressionComponents,
-      manualExpressions,
-      frozenExpressions,
-      neutralFrame,
-      viewState: getCurrentViewState(),
-      backgroundImageUrl,
-    }),
-    createImportedAppearance: (motion) => captureRecordedTakeSnapshot({
-      settings: {
-        ...settings,
-        avatarKind: motion.avatarKind ?? settings.avatarKind,
-        exportFps: motion.fps,
-      },
-      identityVertices,
-      identityParameters: {
-        seed: identitySeed,
-        presentation: identityGender,
-        population: identityEthnicity,
-        presentationStrength: identityPresentationStrength,
-        populationWeights: identityPopulationWeights,
-      },
-      identityWeights,
-      gnmExpressionWeights,
-      gnmFrozenExpressionComponents,
-      manualExpressions: motion.manualExpressions,
-      frozenExpressions: motion.frozenExpressions,
-      neutralFrame: motion.neutral,
-      viewState: motion.viewState,
-      backgroundImageUrl,
-    }),
-    applyImportedAppearance: (importedAppearance) => {
-      calibration.restoreNeutralFrame(importedAppearance.neutralFrame);
-      updateSetting("avatarKind", importedAppearance.settings.avatarKind);
-      setManualExpressions(importedAppearance.manualExpressions);
-      setFrozenExpressions(importedAppearance.frozenExpressions);
-      restoreGnmState(importedAppearance);
-    },
+    captureAppearance: appearance.captureCurrent,
+    createImportedAppearance: appearance.createImported,
+    applyImportedAppearance: appearance.applyImported,
     output: {
       isActive: () => outputRecordingAdapterRef.current.isActive(),
       begin: (command) => outputRecordingAdapterRef.current.begin(command),
@@ -423,187 +374,85 @@ function App() {
   exportBusyAdapterRef.current = () => motionVideoRendering || pngSequenceRendering;
 
   const presetController = usePresets({
-    captureSnapshot: () => captureRecordedTakeSnapshot({
-      settings,
-      identityVertices,
-      identityParameters: { seed: identitySeed, presentation: identityGender, population: identityEthnicity, presentationStrength: identityPresentationStrength, populationWeights: identityPopulationWeights },
-      identityWeights,
-      gnmExpressionWeights,
-      gnmFrozenExpressionComponents,
-      manualExpressions,
-      frozenExpressions,
-      neutralFrame,
-      viewState: getCurrentViewState(),
-      backgroundImageUrl,
-    }),
-    applySnapshot: (snapshot) => {
-      setSettings(snapshot.settings);
-      restoreGnmState(snapshot);
-      setManualExpressions({ ...snapshot.manualExpressions });
-      setFrozenExpressions({ ...snapshot.frozenExpressions });
-      calibration.restoreNeutralFrame(snapshot.neutralFrame);
-      setForcedViewState(snapshot.viewState);
-      if (snapshot.backgroundImageUrl) adoptBackgroundImageUrl(snapshot.backgroundImageUrl);
-    },
+    captureSnapshot: appearance.captureCurrent,
+    applySnapshot: appearance.applyFullSnapshot,
     onToast: pushToast,
     onError: setDeviceError,
     onSaved: (result, count) => showSaveResult("Preset bundle exported", `${count} named full-state preset${count === 1 ? "" : "s"}`, result),
   });
   const { presets: fullStatePresets, selectedId: selectedPresetId, name: presetName } = presetController;
 
-  const setCaptureProcessingPaused = (paused: boolean, synchronizeRecording: boolean) => {
-    if (calibrating || captureFinalizing) return;
-    if (synchronizeRecording && recordingState !== "idle") {
-      recording.setPaused(paused);
-    }
-    capturePausedRef.current = paused;
-    captureDevices.setPaused(paused);
-    pushToast({
-      type: paused ? "warning" : "success",
-      title: paused ? "Capture paused" : "Capture resumed",
-      message: paused
-        ? `Face tracking and microphone processing are paused. The avatar will hold its last tracked pose${synchronizeRecording && recordingState !== "idle" ? " and the active take timeline is paused" : ""}.`
-        : `Face tracking and microphone processing have resumed on the selected devices${synchronizeRecording && recordingState !== "idle" ? " with the active take" : ""}.`,
-    });
-  };
-
-  const toggleCaptureProcessing = () => {
-    setCaptureProcessingPaused(!capturePausedRef.current, recordingState !== "idle");
-  };
-
-  useEffect(() => {
-    const toggleFromKeyboard = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || target?.matches("input, textarea, select, [contenteditable='true']")) return;
-      if (event.key.toLowerCase() !== "p") return;
-      if (calibrating || captureFinalizing || (cameraAccess !== "ready" && microphoneAccess !== "ready")) return;
-      event.preventDefault();
-      toggleCaptureProcessing();
-    };
-    window.addEventListener("keydown", toggleFromKeyboard);
-    return () => window.removeEventListener("keydown", toggleFromKeyboard);
+  const studioControls = useStudioControls({
+    capturePaused,
+    calibrating,
+    captureFinalizing,
+    cameraReady: cameraAccess === "ready",
+    microphoneReady: microphoneAccess === "ready",
+    recordingState,
+    hasRecordedFrames: recordedFrames.length > 0,
+    setCapturePaused: captureDevices.setPaused,
+    setRecordingPaused: recording.setPaused,
+    togglePlayback: playback.toggle,
+    setActivePanel,
+    setActiveWorkspace,
+    onToast: pushToast,
   });
-
-  const activateWorkspace = (workspace: Workspace) => {
-    setActiveWorkspace(workspace);
-    if (workspace === "capture") setActivePanel("capture");
-    if (workspace === "create" || workspace === "edit") setActivePanel("avatar");
-    window.setTimeout(() => {
-      const target = document.querySelector<HTMLElement>(`[data-workspace-target="${workspace}"]`);
-      target?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      target?.classList.remove("workspace-highlight");
-      requestAnimationFrame(() => target?.classList.add("workspace-highlight"));
-      if (workspace === "export") {
-        target?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")?.focus({ preventScroll: true });
-      }
-    }, 0);
-  };
-
-  const togglePause = () => {
-    if (recordingState === "recording") {
-      setCaptureProcessingPaused(true, true);
-    } else if (recordingState === "paused") {
-      setCaptureProcessingPaused(false, true);
-    } else if (recordedFrames.length) playback.toggle();
-  };
-
-  const faceConfidence = useMemo(() => estimateTrackingQuality(trackingFrame), [trackingFrame]);
-  const trackingQualityLabel = trackerStatus === "error"
-    ? "Needs retry"
-    : trackerStatus === "loading"
-      ? "Starting"
-      : !trackingFrame
-        ? "No face"
-        : faceConfidence >= 90
-          ? "Excellent"
-          : faceConfidence >= 76
-            ? "Good"
-            : faceConfidence >= 58
-              ? "Fair"
-              : "Weak";
-  const recordedDuration = recordedFrames.at(-1)?.timestamp ?? 0;
-  const editedPreviewDuration = Math.max(0, (Math.min(recordedDuration, exportTrimEndMs || recordedDuration) - Math.min(recordedDuration, exportTrimStartMs)) / exportPlaybackSpeed);
-  const playbackDuration = activeWorkspace === "export" && recordedFrames.length ? editedPreviewDuration : recordedDuration;
-  const timelineDuration = recordedFrames.length
-    ? Math.max(1, playbackDuration)
-    : Math.max(10_000, recordingElapsed);
-  const timelinePosition = Math.min(timelineDuration, Math.max(0, recordingElapsed));
-  const timelinePercent = Math.min(100, Math.max(0, (timelinePosition / timelineDuration) * 100));
-  const connectedCaptureCount = Number(cameraAccess === "ready") + Number(microphoneAccess === "ready");
-  const captureStatusTitle = `Camera: ${cameraAccess === "ready" ? "ready" : "not connected"}. Microphone: ${microphoneAccess === "ready" ? "ready" : "not connected"}. Right-click to choose the tracking backend.`;
-  const displayedFrame = playbackFrame ?? applyNeutralBaseline(trackingFrame, neutralFrame);
-  const displayedFrameRef = useRef<TrackingFrame | null>(displayedFrame);
-  displayedFrameRef.current = displayedFrame;
-  const liveSemantic = useMemo(
-    () => semanticInfluences(Object.fromEntries((displayedFrame?.blendshapes ?? []).map(({ name, score }) => [name, score]))),
-    [displayedFrame],
-  );
-  const liveFacecap = useMemo(
-    () => facecapInfluences(Object.fromEntries((displayedFrame?.blendshapes ?? []).map(({ name, score }) => [name, score]))),
-    [displayedFrame],
-  );
-  const activeProfile = avatarProfiles[settings.avatarKind];
-  const activeLiveExpressions: Record<string, number> = settings.avatarKind === "facecap"
-    ? liveFacecap
-    : { ...liveSemantic, jaw_open: displayedFrame?.mouthOpen ?? 0 };
-  const toggleExpressionFreeze = (name: string) => {
-    setFrozenExpressions((current) => {
-      if (name in current) {
-        const next = { ...current };
-        delete next[name];
-        return next;
-      }
-      return {
-        ...current,
-        [name]: Math.min(1, (activeLiveExpressions[name] ?? 0) + (manualExpressions[name] ?? 0)),
-      };
-    });
-  };
-
-  const resetActiveExpressions = () => {
-    const activeNames = new Set(activeProfile.expressionNames);
-    setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !activeNames.has(name))));
-    setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !activeNames.has(name))));
-  };
-
-  const recordedAppearanceActive = Boolean(
-    recordedAppearance && (recordingState !== "idle" || captureFinalizing || motionVideoRendering || pngSequenceRendering || playbackFrame),
-  );
-  const stageAppearance = recordedAppearanceActive ? recordedAppearance : null;
-  const stageSettings = stageAppearance?.settings ?? settings;
-  const stageIdentityVertices = stageAppearance?.identityVertices ?? identityVertices;
-  const stageManualExpressions = stageAppearance?.manualExpressions ?? manualExpressions;
-  const stageFrozenExpressions = stageAppearance?.frozenExpressions ?? frozenExpressions;
-  const stageNeutralFrame = stageAppearance?.neutralFrame ?? neutralFrame;
-  const stageBackgroundImageUrl = stageAppearance?.backgroundImageUrl ?? backgroundImageUrl;
-  useEffect(() => {
-    captureDevices.attachVideo();
-  }, [captureDevices, popoutState]);
-
-  useEffect(() => {
-    if (popoutState !== "active") return;
-    const snapshot: OutputSnapshot = {
-      settings: stageSettings,
-      frame: displayedFrameRef.current,
-      neutralFrame: stageNeutralFrame,
-      identityVertices: stageIdentityVertices,
-      manualExpressions: stageManualExpressions,
-      frozenExpressions: stageFrozenExpressions,
-      trackingReady: Boolean(getCurrentTrackingFrame()),
-      capturePaused,
-      recordingActive: motionVideoRendering || pngSequenceRendering || recordingState !== "idle",
-      resetViewSignal,
-      backgroundImageUrl: stageBackgroundImageUrl,
-      viewState: stageAppearance?.viewState ?? getCurrentViewState(),
-    };
-    sendOutputSnapshot(snapshot);
-  }, [captureFinalizing, capturePaused, getCurrentTrackingFrame, getCurrentViewState, motionVideoRendering, pngSequenceRendering, popoutState, recordingState, resetViewSignal, sendOutputSnapshot, stageAppearance, stageBackgroundImageUrl, stageFrozenExpressions, stageIdentityVertices, stageManualExpressions, stageNeutralFrame, stageSettings]);
-
-  useEffect(() => {
-    if (popoutState !== "active") return;
-    sendOutputFrame(displayedFrame, Boolean(trackingFrame));
-  }, [displayedFrame, popoutState, sendOutputFrame, trackingFrame]);
-
+  const {
+    activateWorkspace, showAvatar, showCapture, toggleCaptureProcessing, togglePause,
+  } = studioControls;
+  const derived = useStudioDerivedState({
+    settings,
+    trackerStatus,
+    trackingFrame,
+    neutralFrame,
+    playbackFrame,
+    recordedFrames,
+    recordingElapsed,
+    workspace: activeWorkspace,
+    trimStartMs: exportTrimStartMs,
+    trimEndMs: exportTrimEndMs,
+    playbackSpeed: exportPlaybackSpeed,
+    cameraReady: cameraAccess === "ready",
+    microphoneReady: microphoneAccess === "ready",
+    manualExpressions,
+    setManualExpressions,
+    setFrozenExpressions,
+  });
+  const {
+    faceConfidence, trackingQualityLabel, recordedDuration, playbackDuration,
+    timelineDuration, timelinePosition, timelinePercent, connectedCaptureCount,
+    captureStatusTitle, displayedFrame, activeProfile, toggleExpressionFreeze,
+    resetActiveExpressions,
+  } = derived;
+  const stageOutput = useStageOutputSync({
+    settings,
+    identityVertices,
+    manualExpressions,
+    frozenExpressions,
+    neutralFrame,
+    backgroundImageUrl,
+    recordedAppearance,
+    recordingState,
+    captureFinalizing,
+    motionVideoRendering,
+    pngSequenceRendering,
+    playbackFrame,
+    displayedFrame,
+    trackingFrame,
+    capturePaused,
+    resetViewSignal,
+    popoutState,
+    getCurrentTrackingFrame,
+    getCurrentViewState,
+    attachVideo: captureDevices.attachVideo,
+    sendSnapshot: sendOutputSnapshot,
+    sendFrame: sendOutputFrame,
+  });
+  const {
+    settings: stageSettings, identityVertices: stageIdentityVertices,
+    manualExpressions: stageManualExpressions, frozenExpressions: stageFrozenExpressions,
+    neutralFrame: stageNeutralFrame, backgroundImageUrl: stageBackgroundImageUrl,
+  } = stageOutput;
   return (
     <>
     <main
@@ -625,8 +474,8 @@ function App() {
         collapsed={leftSidebarCollapsed}
         activePanel={activePanel}
         toggleCollapsed={() => setLeftSidebarCollapsed((value) => !value)}
-        showAvatar={() => { setActivePanel("avatar"); setActiveWorkspace("create"); }}
-        showCapture={() => { setActivePanel("capture"); setActiveWorkspace("capture"); }}
+        showAvatar={showAvatar}
+        showCapture={showCapture}
         avatarContent={<>
           <AvatarModelPanel avatarKind={settings.avatarKind} gnmInfo={gnmInfo} select={(avatarKind) => { updateSetting("avatarKind", avatarKind); pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: avatarKind === "facecap" ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." }); }} />
           {activeProfile.supportsIdentity && <IdentityPanel seed={identitySeed} presentation={identityGender} population={identityEthnicity} presentationStrength={identityPresentationStrength} populationWeights={identityPopulationWeights} status={identityStatus} recordingIdle={recordingState === "idle"} web={isWebEdition} webBackend={webIdentityBackend} setSeed={identity.setSeed} setPresentation={identity.choosePresentation} setPopulation={identity.choosePopulation} setPresentationStrength={identity.setPresentationStrength} setPopulationWeight={identity.updatePopulationWeight} randomize={identity.randomize} comparePresentation={identity.comparePresentation} generate={() => void identity.generate()} />}
