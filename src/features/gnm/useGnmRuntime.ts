@@ -14,12 +14,14 @@ type Population = "middle_eastern" | "asian" | "white" | "black" | "blend";
 
 export interface GnmRuntimeOptions {
   avatarKind: AvatarKind;
-  recordingIdle: boolean;
+  isRecordingIdle: () => boolean;
   onToast: (toast: Toast) => void;
   onError: (message: string) => void;
 }
 
-export function useGnmRuntime({ avatarKind, recordingIdle, onToast, onError }: GnmRuntimeOptions) {
+export function useGnmRuntime({ avatarKind, isRecordingIdle, onToast, onError }: GnmRuntimeOptions) {
+  const recordingIdleGetterRef = useRef(isRecordingIdle);
+  recordingIdleGetterRef.current = isRecordingIdle;
   const [identitySeed, setIdentitySeed] = useState("GNM-2048");
   const [identityGender, setIdentityGender] = useState<Presentation>("blend");
   const [identityEthnicity, setIdentityEthnicity] = useState<Population>("blend");
@@ -116,10 +118,10 @@ export function useGnmRuntime({ avatarKind, recordingIdle, onToast, onError }: G
   }, [evaluateParameters, identityPopulationWeights, identityPresentationStrength, identitySeed]);
 
   useEffect(() => {
-    if (!identityDecoderReady || avatarKind !== "gnm" || !recordingIdle) return;
+    if (!identityDecoderReady || avatarKind !== "gnm" || !recordingIdleGetterRef.current()) return;
     const timer = window.setTimeout(() => { void generateIdentity(identitySeed, identityPresentationStrength, identityPopulationWeights, false); }, 220);
     return () => window.clearTimeout(timer);
-  }, [avatarKind, generateIdentity, identityDecoderReady, identityEthnicity, identityGender, identityPopulationWeights, identityPresentationStrength, identitySeed, recordingIdle]);
+  }, [avatarKind, generateIdentity, identityDecoderReady, identityEthnicity, identityGender, identityPopulationWeights, identityPresentationStrength, identitySeed]);
 
   useEffect(() => {
     if (!expressionDecoderReady || !expressionDecoderRef.current) return;

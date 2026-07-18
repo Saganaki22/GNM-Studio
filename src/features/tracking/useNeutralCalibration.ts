@@ -10,7 +10,7 @@ interface NeutralCalibrationOptions {
   stageSize: ViewportSize;
   mirror: boolean;
   cameraReady: boolean;
-  recordingIdle: boolean;
+  isRecordingIdle(): boolean;
   frame: TrackingFrame | null;
   getCurrentFrame(): TrackingFrame | null;
   onNeutralChanged(): void;
@@ -22,7 +22,7 @@ export function useNeutralCalibration({
   stageSize,
   mirror,
   cameraReady,
-  recordingIdle,
+  isRecordingIdle,
   frame,
   getCurrentFrame,
   onNeutralChanged,
@@ -36,11 +36,11 @@ export function useNeutralCalibration({
   const sessionRef = useRef(0);
   const alignmentRef = useRef<FaceAlignment>({ status: "missing", message: "Calibration idle — connect a camera when you want face tracking" });
   const timerWaitersRef = useRef(new Map<number, () => void>());
-  const recordingIdleRef = useRef(recordingIdle);
+  const recordingIdleGetterRef = useRef(isRecordingIdle);
   const currentFrameGetterRef = useRef(getCurrentFrame);
   const neutralChangedRef = useRef(onNeutralChanged);
 
-  recordingIdleRef.current = recordingIdle;
+  recordingIdleGetterRef.current = isRecordingIdle;
   currentFrameGetterRef.current = getCurrentFrame;
   neutralChangedRef.current = onNeutralChanged;
 
@@ -98,7 +98,7 @@ export function useNeutralCalibration({
 
   const calibrate = useCallback(async () => {
     const initialFrame = currentFrameGetterRef.current();
-    if (!recordingIdleRef.current || !initialFrame) return;
+    if (!recordingIdleGetterRef.current() || !initialFrame) return;
     const session = ++sessionRef.current;
     setCalibrating(true);
     setComplete(false);

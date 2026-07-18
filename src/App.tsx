@@ -18,6 +18,8 @@ import { PresetPanel } from "./features/presets/PresetPanel";
 import { usePresets } from "./features/presets/usePresets";
 import { useOutputPopout } from "./features/output/useOutputPopout";
 import { TransportDock } from "./features/recording/TransportDock";
+import { usePlayback } from "./features/recording/usePlayback";
+import { useRecordingSession } from "./features/recording/useRecordingSession";
 import { LeftSidebar } from "./features/shell/LeftSidebar";
 import { StudioFileInputs } from "./features/shell/StudioFileInputs";
 import { StudioTopBar } from "./features/shell/StudioTopBar";
@@ -29,26 +31,33 @@ import { ToastCenter } from "./components/ToastCenter";
 import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
 import { createAnimatedGlb } from "./lib/glbExport";
 import { avatarProfiles, facecapInfluences } from "./lib/avatarProfiles";
-import type { OutputSnapshot } from "./lib/outputChannel";
-import { parseMotionFile } from "./lib/motionFile";
-import { mouthOpenInfluence, semanticInfluences } from "./lib/retarget";
+import type { MainToOutputCommand, OutputSnapshot } from "./lib/outputChannel";
+import { semanticInfluences } from "./lib/retarget";
 import type { ViewportSize } from "./lib/coverProjection";
 import { inspectRecordedMedia } from "./lib/mediaInspection";
-import { preferredAudioRecorderMimeType, preferredVideoRecorderMimeType, preferredWebmRecorderMimeType } from "./lib/recordingMedia";
+import { preferredVideoRecorderMimeType, preferredWebmRecorderMimeType } from "./lib/recordingMedia";
 import {
   captureRecordedTakeSnapshot, recordingAppearanceSettingKeys, serializableRecordedTakeSnapshot,
 } from "./lib/recordingAppearance";
 import type {
-  AppSettings, AvatarMotionSample, CameraViewState,
+  AppSettings, CameraViewState,
   RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
 } from "./types";
 import { canvasPngBlob } from "./lib/canvasCapture";
 import { createStoredZip } from "./lib/zipStore";
 import { trimAndRetimeMotion } from "./lib/motionEdit";
-import { afterBrowserPaint, formatTime, timestampedFilename } from "./lib/studioFormat";
+import { afterBrowserPaint, timestampedFilename } from "./lib/studioFormat";
 import { applyNeutralBaseline, estimateTrackingQuality, playbackTrackingFrame, recordedFrameAtTime } from "./lib/trackingFrames";
 import { isDesktopRuntime, isWebEdition, manualJointGroups, type FfmpegProbe, type Workspace } from "./app/studioConfig";
 import "./App.css";
+
+type OutputStartCommand = Omit<Extract<MainToOutputCommand, { type: "record"; action: "start" }>, "type" | "action">;
+type OutputRecordingBridge = {
+  isActive(): boolean;
+  begin(command: OutputStartCommand): Promise<void>;
+  pause(paused: boolean): void;
+  stop(): void;
+};
 
 function App() {
   const [gnmInfo, setGnmInfo] = useState<{ vertices: number; identityDimensions: number; expressionDimensions: number } | null>(null);
@@ -61,16 +70,7 @@ function App() {
     rightSidebarCollapsed, setRightSidebarCollapsed,
   } = useStudioSettings();
   const [deviceError, setDeviceError] = useState("");
-  const [recordingState, setRecordingState] = useState<"idle" | "recording" | "paused">("idle");
-  const [recordingElapsed, setRecordingElapsed] = useState(0);
-  const [recordedFrames, setRecordedFrames] = useState<RecordedFrame[]>([]);
-  const [lastVideo, setLastVideo] = useState<Blob | null>(null);
-  const [lastAudio, setLastAudio] = useState<Blob | null>(null);
-  const [captureFinalizing, setCaptureFinalizing] = useState(false);
-  const [recordedViewState, setRecordedViewState] = useState<CameraViewState | null>(null);
-  const [recordedAppearance, setRecordedAppearance] = useState<RecordedTakeSnapshot | null>(null);
   const [forcedViewState, setForcedViewState] = useState<CameraViewState | null>(null);
-  const [lastVideoQuality, setLastVideoQuality] = useState({ videoBitrate: 12_000_000, audioBitrate: 192_000 });
   const [videoExportProgress, setVideoExportProgress] = useState<number | null>(null);
   const [videoExportBackend, setVideoExportBackend] = useState<"webcodecs" | "ffmpeg" | null>(null);
   const [motionVideoRendering, setMotionVideoRendering] = useState(false);
@@ -81,13 +81,13 @@ function App() {
   const [exportPlaybackSpeed, setExportPlaybackSpeed] = useState(1);
   const [ffmpegStatus, setFfmpegStatus] = useState<"unknown" | "checking" | "available" | "unavailable">("unknown");
   const [ffmpegVersion, setFfmpegVersion] = useState("");
-  const [playing, setPlaying] = useState(false);
-  const [playbackFrame, setPlaybackFrame] = useState<TrackingFrame | null>(null);
   const [activePanel, setActivePanel] = useState<"avatar" | "capture">(isWebEdition ? "capture" : "avatar");
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>(isWebEdition ? "capture" : "create");
   const { fullscreen, controlsHidden: outputControlsHidden, scheduleControls: scheduleOutputControls, toggle: toggleFullscreen } = useFullscreenControls(settings, setDeviceError);
   const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const { toasts, pushToast, dismissToast } = useToasts();
+  const recordingStateGetterAdapterRef = useRef<() => "idle" | "recording" | "paused">(() => "idle");
+  const isRecordingIdle = useCallback(() => recordingStateGetterAdapterRef.current() === "idle", []);
   const videoRef = useRef<HTMLVideoElement>(null);
   const resolveCaptureDeviceSelection = useCallback((cameraOptions: { id: string }[], microphoneOptions: { id: string }[]) => {
     setSettings((current) => ({
@@ -114,7 +114,7 @@ function App() {
   } = captureDevices;
   const { identity, expression, restoreState: restoreGnmState } = useGnmRuntime({
     avatarKind: settings.avatarKind,
-    recordingIdle: recordingState === "idle",
+    isRecordingIdle,
     onToast: pushToast,
     onError: setDeviceError,
   });
@@ -134,29 +134,44 @@ function App() {
   const motionInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
   const capturePausedRef = useRef(capturePaused);
-  const recordingFramesRef = useRef<RecordedFrame[]>([]);
-  const recordedAppearanceRef = useRef<RecordedTakeSnapshot | null>(null);
-  const recordingStartedAtRef = useRef(0);
-  const recordingPausedAtRef = useRef<number | null>(null);
-  const recordingPausedDurationRef = useRef(0);
-  const latestAvatarMotionRef = useRef<{ timestamp: number; sample: AvatarMotionSample } | null>(null);
-  const pendingAvatarMotionFramesRef = useRef(new Map<number, number>());
   const currentViewStateRef = useRef<CameraViewState | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaChunksRef = useRef<Blob[]>([]);
   const avatarCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const recordingTickerRef = useRef<number | null>(null);
-  const playbackAnimationRef = useRef<number | null>(null);
   const neutralFrameGetterAdapterRef = useRef<() => TrackingFrame | null>(() => null);
+  const playbackLandmarkGetterAdapterRef = useRef<() => { x: number; y: number; z: number }[]>(() => []);
+  const recordingFinalizingGetterAdapterRef = useRef<() => boolean>(() => false);
+  const recordedAppearanceGetterAdapterRef = useRef<() => RecordedTakeSnapshot | null>(() => null);
+  const recordedFramesGetterAdapterRef = useRef<() => RecordedFrame[]>(() => []);
+  const outputRecordingAdapterRef = useRef<OutputRecordingBridge>({
+    isActive: () => false,
+    begin: (_command) => Promise.reject<void>(new Error("The output controller is not ready.")),
+    pause: (_paused) => {},
+    stop: () => {},
+  });
 
   capturePausedRef.current = capturePaused;
 
-  const prepareTrackerReload = useCallback(() => {
-    if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-    playbackAnimationRef.current = null;
-    setPlaying(false);
-    setPlaybackFrame(null);
-  }, []);
+  const getPlaybackFrames = useCallback(() => {
+    const currentFrames = recordedFramesGetterAdapterRef.current();
+    return activeWorkspace === "export"
+      ? trimAndRetimeMotion(
+        currentFrames,
+        exportTrimStartMs,
+        exportTrimEndMs || (currentFrames.at(-1)?.timestamp ?? 0),
+        exportPlaybackSpeed,
+        settings.exportFps,
+      )
+      : currentFrames;
+  }, [activeWorkspace, exportPlaybackSpeed, exportTrimEndMs, exportTrimStartMs, settings.exportFps]);
+  const getPlaybackLandmarks = useCallback(() => playbackLandmarkGetterAdapterRef.current(), []);
+  const playback = usePlayback({
+    isRecordingIdle,
+    cameraReady: cameraAccess === "ready",
+    getFrames: getPlaybackFrames,
+    getLandmarks: getPlaybackLandmarks,
+    onToast: pushToast,
+  });
+  const { playing, frame: playbackFrame, elapsed: recordingElapsed } = playback;
+  const prepareTrackerReload = playback.resetSilently;
   const changeTrackingBackend = useCallback((backend: TrackingBackend) => {
     setSettings((current) => ({ ...current, trackingBackend: backend }));
   }, [setSettings]);
@@ -186,7 +201,7 @@ function App() {
     stageSize,
     mirror: settings.mirror,
     cameraReady: cameraAccess === "ready",
-    recordingIdle: recordingState === "idle",
+    isRecordingIdle,
     frame: trackingFrame,
     getCurrentFrame: getCurrentTrackingFrame,
     onNeutralChanged: tracker.resetFilters,
@@ -197,39 +212,9 @@ function App() {
     faceAlignment: calibrationFaceAlignment, readiness: calibrationReadiness,
   } = calibration;
   neutralFrameGetterAdapterRef.current = calibration.getNeutralFrame;
-
-  const storeAvatarMotion = useCallback((sample: AvatarMotionSample, frameTimestamp: number) => {
-    latestAvatarMotionRef.current = { timestamp: frameTimestamp, sample };
-    const pendingFrameIndex = pendingAvatarMotionFramesRef.current.get(frameTimestamp);
-    if (pendingFrameIndex !== undefined) {
-      const pendingFrame = recordingFramesRef.current[pendingFrameIndex];
-      if (pendingFrame) pendingFrame.avatarMotion = sample;
-      pendingAvatarMotionFramesRef.current.delete(frameTimestamp);
-    }
-  }, []);
-
-  const interruptOutputRecording = useCallback(() => {
-    if (recordingTickerRef.current) window.clearInterval(recordingTickerRef.current);
-    setRecordedFrames([...recordingFramesRef.current]);
-    setRecordingState("idle");
-    setCaptureFinalizing(false);
-  }, []);
-  const output = useOutputPopout({
-    isRecordingActive: () => recordingState !== "idle",
-    onRecordingInterrupted: interruptOutputRecording,
-    onRecordResult: (blob) => {
-      setLastVideo(blob);
-      setCaptureFinalizing(false);
-    },
-    onRecordError: () => setCaptureFinalizing(false),
-    onViewState: (viewState) => { currentViewStateRef.current = viewState; },
-    onAvatarMotion: storeAvatarMotion,
-    onToast: pushToast,
-    onError: setDeviceError,
-  });
-  const { ownerPhase: outputOwnerPhase, popoutState } = output;
-  const sendOutputSnapshot = output.sendSnapshot;
-  const sendOutputFrame = output.sendFrame;
+  playbackLandmarkGetterAdapterRef.current = () => (
+    recordedAppearanceGetterAdapterRef.current()?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? []
+  );
 
   useEffect(() => {
     if (!isDesktopRuntime || settings.videoEncoderBackend === "webcodecs") {
@@ -255,13 +240,6 @@ function App() {
     }, 450);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [settings.ffmpegPath, settings.videoEncoderBackend]);
-
-  useEffect(() => {
-    const duration = recordedFrames.at(-1)?.timestamp ?? 0;
-    setExportTrimStartMs(0);
-    setExportTrimEndMs(duration);
-    setExportPlaybackSpeed(1);
-  }, [recordedFrames]);
 
   useEffect(() => {
     const suppressContextMenu = (event: MouseEvent) => event.preventDefault();
@@ -297,7 +275,7 @@ function App() {
   }, []);
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    if ((recordingState !== "idle" || captureFinalizing || motionVideoRendering || pngSequenceRendering) && recordingAppearanceSettingKeys.has(key)) {
+    if ((recordingStateGetterAdapterRef.current() !== "idle" || recordingFinalizingGetterAdapterRef.current() || motionVideoRendering || pngSequenceRendering) && recordingAppearanceSettingKeys.has(key)) {
       pushToast({
         type: "warning",
         title: "Take appearance is locked",
@@ -309,13 +287,128 @@ function App() {
   };
 
   const { backgroundImageUrl, backgroundImageName, chooseBackgroundImage, clearBackgroundImage, adoptBackgroundImageUrl } = useBackgroundImage({
-    getRetainedUrl: () => recordedAppearanceRef.current?.backgroundImageUrl ?? null,
+    getRetainedUrl: () => recordedAppearanceGetterAdapterRef.current()?.backgroundImageUrl ?? null,
     setImageMode: () => updateSetting("backgroundMode", "image"),
     setStudioMode: () => updateSetting("backgroundMode", "studio"),
     onSuccess: (title, message) => pushToast({ type: "success", title, message }),
     onInfo: (title, message) => pushToast({ type: "info", title, message }),
     onError: setDeviceError,
   });
+
+  const recording = useRecordingSession({
+    settings,
+    trackingFrame,
+    neutralFrame,
+    capturePaused,
+    microphoneReady: microphoneAccess === "ready",
+    backgroundImageUrl,
+    getCanvas: () => avatarCanvasRef.current,
+    cloneAudioTrack: captureDevices.cloneAudioTrack,
+    captureAppearance: () => captureRecordedTakeSnapshot({
+      settings,
+      identityVertices,
+      identityParameters: {
+        seed: identitySeed,
+        presentation: identityGender,
+        population: identityEthnicity,
+        presentationStrength: identityPresentationStrength,
+        populationWeights: identityPopulationWeights,
+      },
+      identityWeights,
+      gnmExpressionWeights,
+      gnmFrozenExpressionComponents,
+      manualExpressions,
+      frozenExpressions,
+      neutralFrame,
+      viewState: currentViewStateRef.current,
+      backgroundImageUrl,
+    }),
+    createImportedAppearance: (motion) => captureRecordedTakeSnapshot({
+      settings: {
+        ...settings,
+        avatarKind: motion.avatarKind ?? settings.avatarKind,
+        exportFps: motion.fps,
+      },
+      identityVertices,
+      identityParameters: {
+        seed: identitySeed,
+        presentation: identityGender,
+        population: identityEthnicity,
+        presentationStrength: identityPresentationStrength,
+        populationWeights: identityPopulationWeights,
+      },
+      identityWeights,
+      gnmExpressionWeights,
+      gnmFrozenExpressionComponents,
+      manualExpressions: motion.manualExpressions,
+      frozenExpressions: motion.frozenExpressions,
+      neutralFrame: motion.neutral,
+      viewState: motion.viewState,
+      backgroundImageUrl,
+    }),
+    applyImportedAppearance: (importedAppearance) => {
+      calibration.restoreNeutralFrame(importedAppearance.neutralFrame);
+      updateSetting("avatarKind", importedAppearance.settings.avatarKind);
+      setManualExpressions(importedAppearance.manualExpressions);
+      setFrozenExpressions(importedAppearance.frozenExpressions);
+      restoreGnmState(importedAppearance);
+    },
+    output: {
+      isActive: () => outputRecordingAdapterRef.current.isActive(),
+      begin: (command) => outputRecordingAdapterRef.current.begin(command),
+      pause: (paused) => outputRecordingAdapterRef.current.pause(paused),
+      stop: () => outputRecordingAdapterRef.current.stop(),
+    },
+    playback: {
+      reset: playback.resetSilently,
+      setElapsed: playback.setElapsed,
+      showFrame: playback.showRecordedFrame,
+    },
+    openExportWorkspace: () => setActiveWorkspace("export"),
+    onImportedFps: (fps) => updateSetting("exportFps", fps),
+    onToast: pushToast,
+    onError: setDeviceError,
+  });
+  const {
+    state: recordingState,
+    frames: recordedFrames,
+    lastVideo,
+    lastAudio,
+    finalizing: captureFinalizing,
+    appearance: recordedAppearance,
+    viewState: recordedViewState,
+    videoQuality: lastVideoQuality,
+  } = recording;
+  useEffect(() => {
+    const duration = recordedFrames.at(-1)?.timestamp ?? 0;
+    setExportTrimStartMs(0);
+    setExportTrimEndMs(duration);
+    setExportPlaybackSpeed(1);
+  }, [recordedFrames]);
+  recordingStateGetterAdapterRef.current = recording.getState;
+  recordingFinalizingGetterAdapterRef.current = () => recording.finalizing;
+  recordedAppearanceGetterAdapterRef.current = recording.getAppearance;
+  recordedFramesGetterAdapterRef.current = () => recording.frames;
+
+  const output = useOutputPopout({
+    isRecordingActive: () => recording.getState() !== "idle",
+    onRecordingInterrupted: recording.interruptOutput,
+    onRecordResult: recording.acceptOutputVideo,
+    onRecordError: recording.finishOutputError,
+    onViewState: (viewState) => { currentViewStateRef.current = viewState; },
+    onAvatarMotion: recording.storeAvatarMotion,
+    onToast: pushToast,
+    onError: setDeviceError,
+  });
+  const { ownerPhase: outputOwnerPhase, popoutState } = output;
+  const sendOutputSnapshot = output.sendSnapshot;
+  const sendOutputFrame = output.sendFrame;
+  outputRecordingAdapterRef.current = {
+    isActive: () => output.popoutState === "active",
+    begin: output.beginRecording,
+    pause: output.pauseRecording,
+    stop: output.stopRecording,
+  };
 
   const presetController = usePresets({
     captureSnapshot: () => captureRecordedTakeSnapshot({
@@ -349,25 +442,7 @@ function App() {
   const setCaptureProcessingPaused = (paused: boolean, synchronizeRecording: boolean) => {
     if (calibrating || captureFinalizing) return;
     if (synchronizeRecording && recordingState !== "idle") {
-      const recordingMode = recordedAppearanceRef.current?.settings.recordingMode ?? settings.recordingMode;
-      if (popoutState === "active" && recordingMode !== "motion") {
-        output.pauseRecording(paused);
-      } else if (mediaRecorderRef.current) {
-        if (paused && mediaRecorderRef.current.state === "recording") mediaRecorderRef.current.pause();
-        if (!paused && mediaRecorderRef.current.state === "paused") mediaRecorderRef.current.resume();
-      }
-      if (paused) {
-        recordingPausedAtRef.current = performance.now();
-        setRecordingState("paused");
-      } else {
-        const now = performance.now();
-        if (recordingPausedAtRef.current !== null) {
-          const pausedFor = now - recordingPausedAtRef.current;
-          recordingPausedDurationRef.current += pausedFor;
-        }
-        recordingPausedAtRef.current = null;
-        setRecordingState("recording");
-      }
+      recording.setPaused(paused);
     }
     capturePausedRef.current = paused;
     captureDevices.setPaused(paused);
@@ -497,389 +572,12 @@ function App() {
     });
   };
 
-  useEffect(() => {
-    if (!trackingFrame || recordingState !== "recording") return;
-    const calibratedFrame = applyNeutralBaseline(trackingFrame, neutralFrame) ?? trackingFrame;
-    const latestAvatarMotion = latestAvatarMotionRef.current;
-    const avatarMotion = latestAvatarMotion?.timestamp === calibratedFrame.timestamp
-      ? latestAvatarMotion.sample
-      : undefined;
-    const captured: RecordedFrame = {
-      timestamp: calibratedFrame.timestamp - recordingStartedAtRef.current - recordingPausedDurationRef.current,
-      blendshapes: Object.fromEntries(calibratedFrame.blendshapes.map(({ name, score }) => [name, score])),
-      matrix: calibratedFrame.matrix,
-      avatarMotion,
-      mouthOpen: calibratedFrame.mouthOpen ?? mouthOpenInfluence(
-        Object.fromEntries(calibratedFrame.blendshapes.map(({ name, score }) => [name, score])), calibratedFrame.landmarks,
-      ),
-    };
-    recordingFramesRef.current.push(captured);
-    if (!avatarMotion) {
-      pendingAvatarMotionFramesRef.current.set(calibratedFrame.timestamp, recordingFramesRef.current.length - 1);
-    }
-  }, [neutralFrame, recordingState, trackingFrame]);
-
-  const startRecording = async () => {
-    if (capturePausedRef.current) {
-      pushToast({
-        type: "warning",
-        title: "Resume capture before recording",
-        message: "Press the header Play button so face tracking and microphone processing are live before starting a take.",
-      });
-      return;
-    }
-    if (popoutState === "active" && settings.recordingMode !== "motion" && !settings.showAvatar) {
-      pushToast({
-        type: "warning",
-        title: "Popout avatar layer is disabled",
-        message: "The clean popout intentionally excludes webcam pixels. Enable the avatar before recording there, or bring the canvas back for a camera composite.",
-      });
-      return;
-    }
-    if (!trackingFrame && settings.recordingMode === "motion") {
-      pushToast({
-        type: "warning",
-        title: "Tracker not ready",
-        message: "Motion recording needs a detected face. Enable the camera, wait for Face linked, or choose Avatar video to record manual controls.",
-      });
-      return;
-    }
-    if (settings.recordingMode === "avatar" && !settings.showAvatar) {
-      pushToast({
-        type: "warning",
-        title: "Avatar layer is disabled",
-        message: `Avatar video mode records only enabled avatar content. Turn on the ${avatarProfiles[settings.avatarKind].shortLabel} avatar or choose Camera + avatar mode.`,
-      });
-      return;
-    }
-    if (settings.recordingMode === "composite" && !settings.showAvatar && !settings.showWebcam) {
-      pushToast({
-        type: "warning",
-        title: "No visual layers are enabled",
-        message: `Enable Webcam, the ${avatarProfiles[settings.avatarKind].shortLabel} avatar, or both before recording a composite video.`,
-      });
-      return;
-    }
-    let captureStream: MediaStream | null = null;
-    let recordingIncludesAudio = false;
-    try {
-    if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-    setPlaying(false);
-    setPlaybackFrame(null);
-    recordingFramesRef.current = [];
-    pendingAvatarMotionFramesRef.current.clear();
-    latestAvatarMotionRef.current = null;
-    setRecordedFrames([]);
-    setLastVideo(null);
-    setLastAudio(null);
-    setCaptureFinalizing(false);
-    const appearance = captureRecordedTakeSnapshot({
-      settings,
-      identityVertices,
-      identityParameters: {
-        seed: identitySeed,
-        presentation: identityGender,
-        population: identityEthnicity,
-        presentationStrength: identityPresentationStrength,
-        populationWeights: identityPopulationWeights,
-      },
-      identityWeights,
-      gnmExpressionWeights,
-      gnmFrozenExpressionComponents,
-      manualExpressions,
-      frozenExpressions,
-      neutralFrame,
-      viewState: currentViewStateRef.current,
-      backgroundImageUrl,
-    });
-    const previousBackgroundUrl = recordedAppearanceRef.current?.backgroundImageUrl;
-    if (previousBackgroundUrl && previousBackgroundUrl !== backgroundImageUrl) URL.revokeObjectURL(previousBackgroundUrl);
-    recordedAppearanceRef.current = appearance;
-    setRecordedAppearance(appearance);
-    setRecordedViewState(appearance.viewState);
-    const started = performance.now();
-    recordingStartedAtRef.current = started;
-    recordingPausedAtRef.current = null;
-    recordingPausedDurationRef.current = 0;
-    setRecordingElapsed(0);
-
-    const videoBitrate = settings.videoBitrateMbps * 1_000_000;
-    const audioBitrate = settings.audioBitrateKbps * 1_000;
-    setLastVideoQuality({ videoBitrate, audioBitrate });
-    if (settings.recordingMode === "motion") {
-      const audioTrack = captureDevices.cloneAudioTrack();
-      if (audioTrack) {
-        recordingIncludesAudio = true;
-        const stream = new MediaStream([audioTrack]);
-        captureStream = stream;
-        const mimeType = preferredAudioRecorderMimeType();
-        const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: audioBitrate });
-        mediaChunksRef.current = [];
-        recorder.ondataavailable = (event) => { if (event.data.size) mediaChunksRef.current.push(event.data); };
-        recorder.onstop = async () => {
-          try {
-            if (!mediaChunksRef.current.length) throw new Error("The microphone recorder produced no audio data.");
-            const audio = new Blob(mediaChunksRef.current, { type: recorder.mimeType || mimeType });
-            const tracks = await inspectRecordedMedia(audio);
-            if (!tracks.hasAudio) throw new Error("The selected browser codec omitted the microphone track.");
-            setLastAudio(audio);
-          } catch (audioError) {
-            setDeviceError(`Motion microphone capture failed: ${audioError instanceof Error ? audioError.message : String(audioError)} The motion frames remain usable.`);
-          } finally {
-            stream.getTracks().forEach((track) => track.stop());
-            mediaRecorderRef.current = null;
-            setCaptureFinalizing(false);
-          }
-        };
-        recorder.onerror = (event) => {
-          setCaptureFinalizing(false);
-          setDeviceError(`Motion microphone recorder failed: ${event.type}. Motion capture will remain available without audio.`);
-        };
-        recorder.start(250);
-        mediaRecorderRef.current = recorder;
-      } else if (!settings.muted && microphoneAccess === "ready") {
-        pushToast({ type: "warning", title: "Microphone track is not ready", message: "Motion capture will continue, but this take cannot include audio. Refresh the microphone and retry if audio is required." });
-      }
-    } else {
-      if (popoutState === "active") {
-        recordingIncludesAudio = !settings.muted;
-        const requestId = crypto.randomUUID?.() ?? `record-${Date.now()}`;
-        await output.beginRecording({
-          requestId,
-          fps: settings.exportFps,
-          videoBitrate,
-          audioBitrate,
-          useLiveMicrophone: !settings.muted,
-        });
-        if (settings.recordingMode === "composite") {
-          pushToast({ type: "info", title: "Recording clean popout output", message: "The output window is canvas-only, so this take contains the avatar/background and microphone but not the webcam layer." });
-        }
-      } else {
-        const canvas = avatarCanvasRef.current;
-        if (!canvas) throw new Error("The rendered capture surface is not ready yet.");
-        const stream = canvas.captureStream(settings.exportFps);
-        captureStream = stream;
-        const audioTrack = captureDevices.cloneAudioTrack();
-        if (audioTrack) stream.addTrack(audioTrack);
-        const expectedAudio = Boolean(audioTrack);
-        recordingIncludesAudio = expectedAudio;
-        const mimeType = preferredVideoRecorderMimeType(expectedAudio);
-        const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: videoBitrate, audioBitsPerSecond: audioBitrate });
-        mediaChunksRef.current = [];
-        recorder.ondataavailable = (event) => { if (event.data.size) mediaChunksRef.current.push(event.data); };
-        recorder.onstop = async () => {
-          try {
-            if (!mediaChunksRef.current.length) throw new Error("Video recorder stopped without producing media data. Try recording a slightly longer take or use a different export FPS.");
-            const video = new Blob(mediaChunksRef.current, { type: recorder.mimeType || mimeType });
-            const tracks = await inspectRecordedMedia(video);
-            if (!tracks.hasVideo) throw new Error("The recorder output does not contain a video track.");
-            if (expectedAudio && !tracks.hasAudio) {
-              throw new Error("The selected recorder codec omitted the microphone track. Retry with the portable WebCodecs backend or update WebView2.");
-            }
-            setLastVideo(video);
-          } catch (recordError) {
-            setDeviceError(`Video finalization failed: ${recordError instanceof Error ? recordError.message : String(recordError)}`);
-          } finally {
-            stream.getTracks().forEach((track) => track.stop());
-            mediaRecorderRef.current = null;
-            setCaptureFinalizing(false);
-          }
-        };
-        recorder.onerror = (event) => {
-          setCaptureFinalizing(false);
-          setDeviceError(`Video recorder failed: ${event.type}`);
-        };
-        recorder.start(250);
-        mediaRecorderRef.current = recorder;
-      }
-    }
-    setRecordingState("recording");
-    recordingTickerRef.current = window.setInterval(() => {
-      const now = recordingPausedAtRef.current ?? performance.now();
-      setRecordingElapsed(Math.max(0, now - recordingStartedAtRef.current - recordingPausedDurationRef.current));
-    }, 100);
-    pushToast({
-      type: "info",
-      title: "Recording started",
-      message: settings.recordingMode === "motion"
-        ? `Capturing timestamped face, neutral-relative XYZ, scale, and head-pose controls at up to ${settings.trackingFps} FPS${recordingIncludesAudio ? " with retained microphone audio" : " without microphone audio"}.`
-        : `Capturing ${settings.recordingMode === "avatar" ? "avatar" : "composite"} video at ${settings.exportFps} FPS${recordingIncludesAudio ? " with microphone audio" : " without microphone audio"}.`,
-    });
-    } catch (error) {
-      captureStream?.getTracks().forEach((track) => track.stop());
-      mediaRecorderRef.current = null;
-      if (recordingTickerRef.current) clearInterval(recordingTickerRef.current);
-      setRecordingState("idle");
-      setDeviceError(`Recording setup failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const seekPlayback = (requestedTime: number) => {
-    if (recordingState !== "idle" || !recordedFrames.length) return;
-    const playbackFrames = activeWorkspace === "export" ? editedFramesForExport() : recordedFrames;
-    if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-    playbackAnimationRef.current = null;
-    setPlaying(false);
-    const duration = playbackFrames.at(-1)?.timestamp ?? 0;
-    const elapsed = Math.min(duration, Math.max(0, requestedTime));
-    const recorded = recordedFrameAtTime(playbackFrames, elapsed);
-    const landmarks = recordedAppearanceRef.current?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? [];
-    setPlaybackFrame(playbackTrackingFrame(recorded, landmarks));
-    setRecordingElapsed(elapsed);
-  };
-
-  const returnToLiveTracking = () => {
-    if (recordingState !== "idle") return;
-    if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-    playbackAnimationRef.current = null;
-    setPlaying(false);
-    setPlaybackFrame(null);
-    setRecordingElapsed(0);
-    pushToast({
-      type: "info",
-      title: "Live tracking restored",
-      message: cameraAccess === "ready"
-        ? "Playback is closed and the avatar is responding to the active camera again. The recorded take is still available."
-        : "Playback is closed and the avatar has returned to its live/manual state. The recorded take is still available.",
-    });
-  };
-
   const togglePause = () => {
     if (recordingState === "recording") {
       setCaptureProcessingPaused(true, true);
     } else if (recordingState === "paused") {
       setCaptureProcessingPaused(false, true);
-    } else if (recordedFrames.length) {
-      if (playing) {
-        if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-        playbackAnimationRef.current = null;
-        setPlaying(false);
-      } else {
-        const playbackFrames = activeWorkspace === "export" ? editedFramesForExport() : recordedFrames;
-        const duration = playbackFrames.at(-1)?.timestamp ?? 0;
-        const resumeFrom = recordingElapsed >= duration ? 0 : Math.min(duration, Math.max(0, recordingElapsed));
-        const started = performance.now() - resumeFrom;
-        const landmarks = recordedAppearanceRef.current?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? [];
-        const initialFrame = recordedFrameAtTime(playbackFrames, resumeFrom);
-        setPlaybackFrame(playbackTrackingFrame(initialFrame, landmarks));
-        setRecordingElapsed(resumeFrom);
-        setPlaying(true);
-        const tick = (now: number) => {
-          const elapsed = Math.min(duration, now - started);
-          const recorded = recordedFrameAtTime(playbackFrames, elapsed);
-          setPlaybackFrame(playbackTrackingFrame(recorded, landmarks));
-          setRecordingElapsed(elapsed);
-          if (elapsed < duration) {
-            playbackAnimationRef.current = requestAnimationFrame(tick);
-          } else {
-            setPlaying(false);
-            setPlaybackFrame(null);
-            playbackAnimationRef.current = null;
-          }
-        };
-        playbackAnimationRef.current = requestAnimationFrame(tick);
-      }
-    }
-  };
-
-  const stopRecording = () => {
-    const recordingMode = recordedAppearanceRef.current?.settings.recordingMode ?? settings.recordingMode;
-    if (popoutState === "active" && recordingMode !== "motion") {
-      setCaptureFinalizing(true);
-      output.stopRecording();
-    } else if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      setCaptureFinalizing(true);
-      mediaRecorderRef.current.stop();
-    } else {
-      setCaptureFinalizing(false);
-    }
-    if (recordingTickerRef.current) clearInterval(recordingTickerRef.current);
-    setRecordedFrames([...recordingFramesRef.current]);
-    setRecordingElapsed(recordingFramesRef.current.at(-1)?.timestamp ?? recordingElapsed);
-    setRecordingState("idle");
-    pushToast({
-      type: "success",
-      title: "Take recorded",
-      message: settings.recordingMode === "motion"
-        ? `${recordingFramesRef.current.length.toLocaleString()} motion frames are ready${mediaRecorderRef.current ? "; microphone audio is finalizing" : ""}.`
-        : `The ${avatarProfiles[settings.avatarKind].shortLabel} video take is finalizing and will be ready for MP4 export momentarily${recordingFramesRef.current.length ? `; ${recordingFramesRef.current.length.toLocaleString()} motion frames were also retained` : ""}.`,
-    });
-  };
-
-  const importMotionJson = async (file?: File) => {
-    if (!file) return;
-    if (recordingState !== "idle") {
-      pushToast({
-        type: "warning",
-        title: "Stop recording before importing",
-        message: "The current recording must be stopped before another motion take can replace it.",
-      });
-      return;
-    }
-    if (file.size > 256 * 1024 * 1024) {
-      setDeviceError(`Motion JSON import failed: ${file.name} is larger than the 256 MB safety limit.`);
-      return;
-    }
-    try {
-      const motion = parseMotionFile(JSON.parse(await file.text()));
-      if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-      playbackAnimationRef.current = null;
-      setPlaying(false);
-      setDeviceError("");
-      const importedAppearance = motion.appearance ?? captureRecordedTakeSnapshot({
-        settings: {
-          ...settings,
-          avatarKind: motion.avatarKind ?? settings.avatarKind,
-          exportFps: motion.fps,
-        },
-        identityVertices,
-        identityParameters: {
-          seed: identitySeed,
-          presentation: identityGender,
-          population: identityEthnicity,
-          presentationStrength: identityPresentationStrength,
-          populationWeights: identityPopulationWeights,
-        },
-        identityWeights,
-        gnmExpressionWeights,
-        gnmFrozenExpressionComponents,
-        manualExpressions: motion.manualExpressions,
-        frozenExpressions: motion.frozenExpressions,
-        neutralFrame: motion.neutral,
-        viewState: motion.viewState,
-        backgroundImageUrl,
-      });
-      calibration.restoreNeutralFrame(importedAppearance.neutralFrame);
-      updateSetting("avatarKind", importedAppearance.settings.avatarKind);
-      setManualExpressions(importedAppearance.manualExpressions);
-      setFrozenExpressions(importedAppearance.frozenExpressions);
-      restoreGnmState(importedAppearance);
-      const previousBackgroundUrl = recordedAppearanceRef.current?.backgroundImageUrl;
-      if (previousBackgroundUrl && previousBackgroundUrl !== backgroundImageUrl) URL.revokeObjectURL(previousBackgroundUrl);
-      recordedAppearanceRef.current = importedAppearance;
-      setRecordedAppearance(importedAppearance);
-      recordingFramesRef.current = motion.frames;
-      setRecordedFrames(motion.frames);
-      setLastVideo(null);
-      setLastAudio(null);
-      setRecordedViewState(importedAppearance.viewState);
-      setRecordingElapsed(0);
-      updateSetting("exportFps", importedAppearance.settings.exportFps);
-      const firstFrame = motion.frames[0];
-      const landmarks = importedAppearance.neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? [];
-      setPlaybackFrame(playbackTrackingFrame(firstFrame, landmarks));
-      setActiveWorkspace("export");
-      const duration = motion.frames.at(-1)?.timestamp ?? 0;
-      pushToast({
-        type: "success",
-        title: "Motion JSON imported",
-        message: `${motion.frames.length.toLocaleString()} frames from ${file.name} are ready to scrub, play, and export as GLB.`,
-        detail: `Duration: ${formatTime(duration)} · FPS: ${motion.fps} · Neutral calibration: ${importedAppearance.neutralFrame ? "restored" : "not included"} · Appearance snapshot: ${motion.version === 2 ? "restored" : "rebuilt from current settings"}. JSON contains no MP4/WebM camera or microphone source.`,
-        duration: 9_000,
-      });
-    } catch (error) {
-      setDeviceError(`Motion JSON import failed for ${file.name}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    } else if (recordedFrames.length) playback.toggle();
   };
 
   const editedFramesForExport = () => trimAndRetimeMotion(
@@ -892,7 +590,7 @@ function App() {
 
   const exportMotion = async () => {
     try {
-      const appearance = recordedAppearanceRef.current;
+      const appearance = recording.getAppearance();
       const exportSettings = appearance?.settings ?? settings;
       const serializedAppearance = appearance ? await serializableRecordedTakeSnapshot(appearance) : null;
       const payload = {
@@ -920,46 +618,12 @@ function App() {
     }
   };
 
-  const useCurrentAppearanceForTake = () => {
-    if (!recordedFrames.length) return;
-    const appearance = captureRecordedTakeSnapshot({
-      settings,
-      identityVertices,
-      identityParameters: {
-        seed: identitySeed,
-        presentation: identityGender,
-        population: identityEthnicity,
-        presentationStrength: identityPresentationStrength,
-        populationWeights: identityPopulationWeights,
-      },
-      identityWeights,
-      gnmExpressionWeights,
-      gnmFrozenExpressionComponents,
-      manualExpressions,
-      frozenExpressions,
-      neutralFrame,
-      viewState: currentViewStateRef.current,
-      backgroundImageUrl,
-    });
-    recordedAppearanceRef.current = appearance;
-    setRecordedAppearance(appearance);
-    setRecordedViewState(appearance.viewState);
-    pushToast({
-      type: "success",
-      title: "Recorded take restyled",
-      message: lastVideo
-        ? "Playback, JSON, and GLB now use the current appearance. The directly recorded video remains unchanged because its pixels are already baked."
-        : "Playback and future JSON, GLB, and MP4 renders now use the current appearance. The recorded motion frames were not changed.",
-      duration: 8_000,
-    });
-  };
-
   const renderRecordedMotionVideo = async ({ forceWebm = false }: { forceWebm?: boolean } = {}) => {
     if (!recordedFrames.length) throw new Error("There is no recorded motion take to render.");
     const renderFrames = editedFramesForExport();
     if (!renderFrames.length) throw new Error("The current trim range contains no motion frames.");
     const restoreViewState = currentViewStateRef.current;
-    const appearance = recordedAppearanceRef.current;
+    const appearance = recording.getAppearance();
     const quality = {
       videoBitrate: settings.videoBitrateMbps * 1_000_000,
       audioBitrate: settings.audioBitrateKbps * 1_000,
@@ -991,13 +655,11 @@ function App() {
       duration = Math.max(duration, audioDuration);
       const requestId = crypto.randomUUID?.() ?? `render-${Date.now()}`;
       try {
-        if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-        playbackAnimationRef.current = null;
-        setPlaying(false);
+        playback.resetSilently();
         setMotionVideoRendering(true);
-        setPlaybackFrame(playbackTrackingFrame(renderFrames[0], landmarks));
-        setRecordingElapsed(0);
-        setLastVideoQuality(quality);
+        playback.setFrame(playbackTrackingFrame(renderFrames[0], landmarks));
+        playback.setElapsed(0);
+        recording.setVideoQuality(quality);
         await afterBrowserPaint();
         await output.beginRecording({
           requestId,
@@ -1014,8 +676,8 @@ function App() {
           const tick = (now: number) => {
             const elapsed = Math.min(duration, now - started);
             const recorded = recordedFrameAtTime(renderFrames, elapsed);
-            setPlaybackFrame(playbackTrackingFrame(recorded, landmarks));
-            setRecordingElapsed(elapsed);
+            playback.setFrame(playbackTrackingFrame(recorded, landmarks));
+            playback.setElapsed(elapsed);
             setVideoExportProgress(Math.min(0.45, (elapsed / duration) * 0.45));
             if (elapsed < duration) animation = requestAnimationFrame(tick);
             else requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -1028,13 +690,13 @@ function App() {
           const tracks = await inspectRecordedMedia(rendered);
           if (!tracks.hasAudio) throw new Error("The popout motion renderer omitted the retained microphone track.");
         }
-        setLastVideo(rendered);
+        recording.setVideo(rendered);
         return { video: rendered, quality };
       } finally {
         if (animation) cancelAnimationFrame(animation);
         setMotionVideoRendering(false);
-        setPlaybackFrame(null);
-        setRecordingElapsed(duration);
+        playback.setFrame(null);
+        playback.setElapsed(duration);
         setForcedViewState(restoreViewState);
         await afterBrowserPaint();
         setForcedViewState(null);
@@ -1088,13 +750,11 @@ function App() {
         };
       });
 
-      if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-      playbackAnimationRef.current = null;
-      setPlaying(false);
+      playback.resetSilently();
       setMotionVideoRendering(true);
-      setPlaybackFrame(playbackTrackingFrame(renderFrames[0], landmarks));
-      setRecordingElapsed(0);
-      setLastVideoQuality(quality);
+      playback.setFrame(playbackTrackingFrame(renderFrames[0], landmarks));
+      playback.setElapsed(0);
+      recording.setVideoQuality(quality);
       await afterBrowserPaint();
 
       if (renderAudioContext?.state === "suspended") await renderAudioContext.resume();
@@ -1105,8 +765,8 @@ function App() {
         const tick = (now: number) => {
           const elapsed = Math.min(duration, now - started);
           const recorded = recordedFrameAtTime(renderFrames, elapsed);
-          setPlaybackFrame(playbackTrackingFrame(recorded, landmarks));
-          setRecordingElapsed(elapsed);
+          playback.setFrame(playbackTrackingFrame(recorded, landmarks));
+          playback.setElapsed(elapsed);
           setVideoExportProgress(Math.min(0.45, (elapsed / duration) * 0.45));
           if (elapsed < duration && !recorderFailure) {
             animation = requestAnimationFrame(tick);
@@ -1122,7 +782,7 @@ function App() {
         const tracks = await inspectRecordedMedia(rendered);
         if (!tracks.hasAudio) throw new Error("The motion renderer omitted the retained microphone track.");
       }
-      setLastVideo(rendered);
+      recording.setVideo(rendered);
       return { video: rendered, quality };
     } finally {
       if (animation) cancelAnimationFrame(animation);
@@ -1131,8 +791,8 @@ function App() {
       try { renderAudioSource?.stop(); } catch { /* The source may have ended naturally. */ }
       if (renderAudioContext) await renderAudioContext.close();
       setMotionVideoRendering(false);
-      setPlaybackFrame(null);
-      setRecordingElapsed(duration);
+      playback.setFrame(null);
+      playback.setElapsed(duration);
       setForcedViewState(restoreViewState);
       await afterBrowserPaint();
       setForcedViewState(null);
@@ -1146,7 +806,7 @@ function App() {
     const restoreFrame = playbackFrame;
     const restoreElapsed = recordingElapsed;
     const restoreView = currentViewStateRef.current;
-    const appearance = recordedAppearanceRef.current;
+    const appearance = recording.getAppearance();
     const landmarks = appearance?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? [];
     const editedAudio = lastAudio
       ? await import("./lib/audioEdit").then(({ trimAndRetimeAudio }) => trimAndRetimeAudio(lastAudio, exportTrimStartMs, exportTrimEndMs, exportPlaybackSpeed))
@@ -1170,17 +830,17 @@ function App() {
     remoteCanvas.height = settings.exportHeight;
     const remoteContext = remoteCanvas.getContext("2d");
     try {
-      setPlaying(false);
+      playback.resetSilently();
       setMotionVideoRendering(true);
       setForcedViewState(appearance?.viewState ?? recordedViewState ?? restoreView);
-      setLastVideoQuality(quality);
-      setPlaybackFrame(playbackTrackingFrame(renderFrames[0], landmarks));
-      setRecordingElapsed(0);
+      recording.setVideoQuality(quality);
+      playback.setFrame(playbackTrackingFrame(renderFrames[0], landmarks));
+      playback.setElapsed(0);
       await afterBrowserPaint();
       for (let index = 0; index < renderFrames.length; index += 1) {
         const frame = renderFrames[index];
-        setPlaybackFrame(playbackTrackingFrame(frame, landmarks));
-        setRecordingElapsed(frame.timestamp);
+        playback.setFrame(playbackTrackingFrame(frame, landmarks));
+        playback.setElapsed(frame.timestamp);
         await afterBrowserPaint();
         let sourceCanvas = avatarCanvasRef.current;
         if (!sourceCanvas) {
@@ -1198,13 +858,13 @@ function App() {
       const video = await encoder.finalize();
       completed = true;
       setVideoExportProgress(1);
-      setLastVideo(video);
+      recording.setVideo(video);
       return { video, quality };
     } finally {
       if (!completed) await encoder.cancel().catch(() => undefined);
       setMotionVideoRendering(false);
-      setPlaybackFrame(restoreFrame);
-      setRecordingElapsed(restoreElapsed);
+      playback.setFrame(restoreFrame);
+      playback.setElapsed(restoreElapsed);
       setForcedViewState(restoreView);
       await afterBrowserPaint();
       setForcedViewState(null);
@@ -1267,7 +927,7 @@ function App() {
       return;
     }
     if (videoExportProgress !== null || pngSequenceRendering) return;
-    const appearance = recordedAppearanceRef.current;
+    const appearance = recording.getAppearance();
     const fps = settings.exportFps;
     const renderFrames = editedFramesForExport();
     const duration = renderFrames.at(-1)?.timestamp ?? 0;
@@ -1281,7 +941,7 @@ function App() {
     const restoreView = currentViewStateRef.current;
     const landmarks = appearance?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? [];
     const entries: { name: string; bytes: Uint8Array }[] = [];
-    setPlaying(false);
+    playback.resetSilently();
     setPngSequenceRendering(true);
     setPngExportProgress(0);
     setForcedViewState(appearance?.viewState ?? recordedViewState ?? restoreView);
@@ -1292,8 +952,8 @@ function App() {
       for (let index = 0; index < frameCount; index += 1) {
         const frame = renderFrames[index];
         const timestamp = frame.timestamp;
-        setPlaybackFrame(playbackTrackingFrame(frame, landmarks));
-        setRecordingElapsed(timestamp);
+        playback.setFrame(playbackTrackingFrame(frame, landmarks));
+        playback.setElapsed(timestamp);
         await afterBrowserPaint();
         const png = await captureCurrentCanvasPng(settings.exportWidth, settings.exportHeight);
         entries.push({
@@ -1318,8 +978,8 @@ function App() {
     } finally {
       setPngSequenceRendering(false);
       setPngExportProgress(null);
-      setPlaybackFrame(restoreFrame);
-      setRecordingElapsed(restoreElapsed);
+      playback.setFrame(restoreFrame);
+      playback.setElapsed(restoreElapsed);
       setForcedViewState(restoreView);
       await afterBrowserPaint();
       setForcedViewState(null);
@@ -1438,7 +1098,7 @@ function App() {
 
   const exportGlb = async () => {
     try {
-      const appearance = recordedAppearanceRef.current;
+      const appearance = recording.getAppearance();
       const exportSettings = appearance?.settings ?? settings;
       const bytes = await createAnimatedGlb(
         editedFramesForExport(),
@@ -1672,7 +1332,7 @@ function App() {
           onStageError: handleStageError,
           onViewportResize: handleViewportResize,
           onViewStateChange: handleViewStateChange,
-          onAvatarMotion: storeAvatarMotion,
+          onAvatarMotion: recording.storeAvatarMotion,
         }}
         exportProps={{
           hasTake: recordedFrames.length > 0,
@@ -1690,9 +1350,9 @@ function App() {
           onWidthChange: (value) => updateSetting("exportWidth", Math.min(7680, Math.max(64, Math.round(value / 2) * 2))),
           onHeightChange: (value) => updateSetting("exportHeight", Math.min(4320, Math.max(64, Math.round(value / 2) * 2))),
           onFpsChange: (value) => updateSetting("exportFps", Math.min(120, Math.max(1, Math.round(value)))),
-          onTrimStartChange: (value) => { setExportTrimStartMs(Math.min(exportTrimEndMs || recordedDuration, Math.max(0, value))); setRecordingElapsed(0); setPlaybackFrame(null); },
-          onTrimEndChange: (value) => { setExportTrimEndMs(Math.min(recordedDuration, Math.max(exportTrimStartMs, value))); setRecordingElapsed(0); setPlaybackFrame(null); },
-          onSpeedChange: (value) => { setExportPlaybackSpeed(Math.min(4, Math.max(0.1, value))); setRecordingElapsed(0); setPlaybackFrame(null); },
+          onTrimStartChange: (value) => { setExportTrimStartMs(Math.min(exportTrimEndMs || recordedDuration, Math.max(0, value))); playback.setElapsed(0); playback.setFrame(null); },
+          onTrimEndChange: (value) => { setExportTrimEndMs(Math.min(recordedDuration, Math.max(exportTrimStartMs, value))); playback.setElapsed(0); playback.setFrame(null); },
+          onSpeedChange: (value) => { setExportPlaybackSpeed(Math.min(4, Math.max(0.1, value))); playback.setElapsed(0); playback.setFrame(null); },
           onExportMp4: () => void exportVideo(),
           onExportWebm: () => void exportWebm(),
           onExportPng: () => void exportPngSequence(),
@@ -1713,15 +1373,15 @@ function App() {
       />
       <TransportDock
         audio={{ devices: microphones, selectedId: settings.microphoneId, level: audioLevel, peak: audioPeak, muted: settings.muted, monitoring, select: (id) => updateSetting("microphoneId", id), toggleMute: () => updateSetting("muted", !settings.muted), toggleMonitoring: () => captureDevices.setMonitoring((value) => !value), refresh: () => void captureDevices.enumerateDevices() }}
-        recording={{ state: recordingState, elapsed: recordingElapsed, frameCount: recordedFrames.length, draftFrameCount: recordingFramesRef.current.length, playing, playbackActive: Boolean(playbackFrame || playing), calibrating, finalizing: captureFinalizing, videoBusy: videoExportProgress !== null, popoutStarting: popoutState === "starting", motionNeedsFace: !trackingFrame && settings.recordingMode === "motion", start: () => void startRecording(), stop: stopRecording, togglePause, returnLive: returnToLiveTracking }}
-        timeline={{ percent: timelinePercent, duration: timelineDuration, position: timelinePosition, recordedDuration, playbackDuration, seek: seekPlayback }}
-        exports={{ fps: settings.exportFps, motionInputRef, hasTake: recordedFrames.length > 0, hasVideo: Boolean(lastVideo), sourceIsWebm: Boolean(lastVideo && !lastVideo.type.includes("mp4")), videoProgress: videoExportProgress, backend: videoExportBackend, setFps: (value) => updateSetting("exportFps", value), useCurrentLook: useCurrentAppearanceForTake, exportMotion: () => void exportMotion(), exportGlb: () => void exportGlb(), exportWebmSource: () => void exportWebmSource(), exportVideo: () => void exportVideo() }}
+        recording={{ state: recordingState, elapsed: recordingElapsed, frameCount: recordedFrames.length, draftFrameCount: recording.draftFrameCount, playing, playbackActive: Boolean(playbackFrame || playing), calibrating, finalizing: captureFinalizing, videoBusy: videoExportProgress !== null, popoutStarting: popoutState === "starting", motionNeedsFace: !trackingFrame && settings.recordingMode === "motion", start: () => void recording.start(), stop: recording.stop, togglePause, returnLive: playback.returnToLive }}
+        timeline={{ percent: timelinePercent, duration: timelineDuration, position: timelinePosition, recordedDuration, playbackDuration, seek: playback.seek }}
+        exports={{ fps: settings.exportFps, motionInputRef, hasTake: recordedFrames.length > 0, hasVideo: Boolean(lastVideo), sourceIsWebm: Boolean(lastVideo && !lastVideo.type.includes("mp4")), videoProgress: videoExportProgress, backend: videoExportBackend, setFps: (value) => updateSetting("exportFps", value), useCurrentLook: recording.useCurrentAppearance, exportMotion: () => void exportMotion(), exportGlb: () => void exportGlb(), exportWebmSource: () => void exportWebmSource(), exportVideo: () => void exportVideo() }}
       />
       <ToastCenter
         toasts={toasts}
         onDismiss={dismissToast}
       />
-      <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void presetController.importBundle(file)} />
+      <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void recording.importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void presetController.importBundle(file)} />
     </main>
     {backendMenu && createPortal(<BackendMenu position={backendMenu} backend={settings.trackingBackend} gpuProbe={gpuProbe} cpuProbe={cpuProbe} close={tracker.closeBackendMenu} select={tracker.selectBackend} />, document.body)}
     {settingsOpen && createPortal(<SettingsPopover web={isWebEdition} theme={theme} accent={accent} uiScale={uiScale} settings={settings} appVersion={appVersion} close={() => setSettingsOpen(false)} setTheme={setTheme} setAccent={setAccent} setUiScale={setUiScale} updateSetting={updateSetting} openExternal={(url) => void openExternal(url)} />, document.body)}

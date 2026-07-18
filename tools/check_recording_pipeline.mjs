@@ -92,18 +92,20 @@ const app = [
   "../src/features/recording/TransportDock.tsx",
   "../src/features/capture/useCaptureDevices.ts",
   "../src/features/tracking/useFaceTracker.ts",
+  "../src/features/recording/useRecordingSession.ts",
+  "../src/features/recording/usePlayback.ts",
 ]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
 for (const marker of [
   "pendingAvatarMotionFramesRef.current.set",
   "pendingFrame.avatarMotion = sample",
-  "setCaptureFinalizing(true)",
+  "setFinalizing(true)",
   "cloneLiveAudioTrack",
   "setForcedViewState(appearance?.viewState ?? recordedViewState",
   "renderAudioContext.createMediaStreamDestination()",
   "captureRecordedTakeSnapshot({",
-  "recordedAppearanceRef.current",
+  "appearanceRef.current",
   "const stageSettings = stageAppearance?.settings ?? settings",
   "smoothed.mouthOpen = mouthOpenGateRef.current.update(",
 ]) assert.ok(app.includes(marker), `Recording pipeline is missing ${marker}`);
