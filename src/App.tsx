@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AvatarAppearancePanels } from "./features/avatar/AvatarAppearancePanels";
 import { AvatarModelPanel } from "./features/avatar/AvatarModelPanel";
+import { useBackgroundImage } from "./features/background/useBackgroundImage";
 import { CaptureSidebarContent } from "./features/devices/CaptureSidebarContent";
 import { SettingsPopover } from "./features/settings/SettingsPopover";
+import { useStudioSettings } from "./features/settings/useStudioSettings";
 import { RightSidebar } from "./features/stage/RightSidebar";
 import { StudioViewport } from "./features/stage/StudioViewport";
 import { DeviceAccessPrompt } from "./features/devices/DeviceAccessPrompt";
 import { ExpressionPanel } from "./features/expression/ExpressionPanel";
+import { useFullscreenControls } from "./features/fullscreen/useFullscreenControls";
 import { IdentityPanel } from "./features/identity/IdentityPanel";
 import { PresetPanel } from "./features/presets/PresetPanel";
 import { TransportDock } from "./features/recording/TransportDock";
@@ -15,10 +18,10 @@ import { LeftSidebar } from "./features/shell/LeftSidebar";
 import { StudioFileInputs } from "./features/shell/StudioFileInputs";
 import { StudioTopBar } from "./features/shell/StudioTopBar";
 import { BackendMenu } from "./features/tracking/BackendMenu";
-import { ToastCenter, type ToastMessage } from "./components/ToastCenter";
+import { useToasts } from "./features/toasts/useToasts";
+import { ToastCenter } from "./components/ToastCenter";
 import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
 import { createAnimatedGlb } from "./lib/glbExport";
-import { loadBackgroundImage, removeBackgroundImage, saveBackgroundImage } from "./lib/backgroundStore";
 import { DenseDecoder, expressionDecoderInput, weightedIdentityDecoderInput } from "./lib/decoder";
 import { identityVertexCount } from "./lib/identityVertices";
 import type { WebIdentityEvaluator } from "./lib/webIdentity";
@@ -39,10 +42,6 @@ import {
 import {
   captureRecordedTakeSnapshot, recordingAppearanceSettingKeys, serializableRecordedTakeSnapshot,
 } from "./lib/recordingAppearance";
-import {
-  pinnedFullscreenControlsState, toggledFullscreenControlsOverride,
-  type FullscreenControlsOverride,
-} from "./lib/fullscreenControls";
 import type {
   AppSettings, AvatarMotionSample, CameraViewState, DeviceOption, FaceAlignment,
   IdentityVertices, RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
@@ -58,11 +57,7 @@ import {
 import { trimAndRetimeMotion } from "./lib/motionEdit";
 import { afterBrowserPaint, formatTime, timestampedFilename } from "./lib/studioFormat";
 import { applyNeutralBaseline, estimateTrackingQuality, playbackTrackingFrame, recordedFrameAtTime } from "./lib/trackingFrames";
-import {
-  accentOptions, initialSettings, isDesktopRuntime, isWebEdition,
-  manualJointGroups, settingsStorageVersion, type AccentOption, type BackendProbe,
-  type FfmpegProbe, type Workspace,
-} from "./app/studioConfig";
+import { isDesktopRuntime, isWebEdition, manualJointGroups, type BackendProbe, type FfmpegProbe, type Workspace } from "./app/studioConfig";
 import "./App.css";
 
 function App() {
@@ -95,32 +90,11 @@ function App() {
   const [manualExpressions, setManualExpressions] = useState<Record<string, number>>({});
   const [frozenExpressions, setFrozenExpressions] = useState<Record<string, number>>({});
   const [resetViewSignal, setResetViewSignal] = useState(0);
-  const [settings, setSettings] = useState<AppSettings>(() => {
-    const saved = localStorage.getItem("gnm-studio-settings");
-    if (!saved) return initialSettings;
-    let parsed: Partial<AppSettings>;
-    try {
-      parsed = JSON.parse(saved) as Partial<AppSettings>;
-    } catch {
-      localStorage.removeItem("gnm-studio-settings");
-      return initialSettings;
-    }
-    const savedStorageVersion = Number(localStorage.getItem("gnm-studio-settings-version") ?? 0);
-    const upgradingSingleSmoothingControl = parsed.motionSmoothing === undefined;
-    return {
-      ...initialSettings,
-      ...parsed,
-      videoEncoderBackend: isDesktopRuntime ? parsed.videoEncoderBackend ?? initialSettings.videoEncoderBackend : "webcodecs",
-      // Version 2 makes the experimental material opt-in even for people whose
-      // older local preference had it enabled. Later choices remain persistent.
-      skinTextureEnabled: savedStorageVersion < 2
-        ? false
-        : parsed.skinTextureEnabled ?? initialSettings.skinTextureEnabled,
-      trackingSmoothing: upgradingSingleSmoothingControl
-        ? Math.max(0.72, parsed.trackingSmoothing ?? initialSettings.trackingSmoothing)
-        : parsed.trackingSmoothing ?? initialSettings.trackingSmoothing,
-    };
-  });
+  const {
+    settings, setSettings, settingsOpen, setSettingsOpen, theme, setTheme, accent, setAccent,
+    uiScale, setUiScale, leftSidebarCollapsed, setLeftSidebarCollapsed,
+    rightSidebarCollapsed, setRightSidebarCollapsed,
+  } = useStudioSettings();
   const [cameras, setCameras] = useState<DeviceOption[]>([]);
   const [microphones, setMicrophones] = useState<DeviceOption[]>([]);
   const [permissionState, setPermissionState] = useState<"idle" | "asking" | "ready" | "error">("idle");
@@ -163,27 +137,11 @@ function App() {
   const [exportPlaybackSpeed, setExportPlaybackSpeed] = useState(1);
   const [ffmpegStatus, setFfmpegStatus] = useState<"unknown" | "checking" | "available" | "unavailable">("unknown");
   const [ffmpegVersion, setFfmpegVersion] = useState("");
-  const [backgroundImageUrl, setBackgroundImageUrl] = useState<string | null>(null);
-  const [backgroundImageName, setBackgroundImageName] = useState("");
   const [playing, setPlaying] = useState(false);
   const [playbackFrame, setPlaybackFrame] = useState<TrackingFrame | null>(null);
   const [activePanel, setActivePanel] = useState<"avatar" | "capture">(isWebEdition ? "capture" : "avatar");
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>(isWebEdition ? "capture" : "create");
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">(() => localStorage.getItem("gnm-studio-theme") === "light" ? "light" : "dark");
-  const [accent, setAccent] = useState<AccentOption>(() => {
-    const saved = localStorage.getItem("gnm-studio-accent") as AccentOption | null;
-    return saved && accentOptions.includes(saved) ? saved : "teal";
-  });
-  const [uiScale, setUiScale] = useState(() => {
-    const saved = Number(localStorage.getItem("gnm-studio-ui-scale") ?? 100);
-    return Number.isFinite(saved) ? Math.min(125, Math.max(80, saved)) : 100;
-  });
-  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(() => localStorage.getItem("gnm-studio-left-sidebar-collapsed") === "true");
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(() => localStorage.getItem("gnm-studio-right-sidebar-collapsed") === "true");
-  const [fullscreen, setFullscreen] = useState(false);
-  const [outputControlsHidden, setOutputControlsHidden] = useState(false);
-  const [fullscreenControlsOverride, setFullscreenControlsOverride] = useState<FullscreenControlsOverride>(null);
+  const { fullscreen, controlsHidden: outputControlsHidden, scheduleControls: scheduleOutputControls, toggle: toggleFullscreen } = useFullscreenControls(settings, setDeviceError);
   const [outputOwnerPhase, setOutputOwnerPhase] = useState<OutputOwnerPhase>("studio");
   const popoutState = canMountStudioRenderer(outputOwnerPhase)
     ? "idle"
@@ -192,7 +150,7 @@ function App() {
       : "active";
   const [trackerRestartKey, setTrackerRestartKey] = useState(0);
   const [appVersion, setAppVersion] = useState(__APP_VERSION__);
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const { toasts, pushToast, dismissToast } = useToasts();
   const [stageSize, setStageSize] = useState<ViewportSize>({ width: 640, height: 480 });
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceAlignment = useMemo(
@@ -217,7 +175,6 @@ function App() {
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const motionInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
-  const backgroundObjectUrlRef = useRef<string | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -246,7 +203,6 @@ function App() {
   const mediaChunksRef = useRef<Blob[]>([]);
   const avatarCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recordingTickerRef = useRef<number | null>(null);
-  const outputHideTimerRef = useRef<number | null>(null);
   const outputChannelRef = useRef<BroadcastChannel | null>(null);
   const outputHeartbeatRef = useRef(0);
   const outputOwnerPhaseRef = useRef<OutputOwnerPhase>(outputOwnerPhase);
@@ -279,7 +235,6 @@ function App() {
   const gnmExpressionWeightsRef = useRef(gnmExpressionWeights);
   const identityGenerationRef = useRef(0);
   const webIdentityEvaluatorRef = useRef<WebIdentityEvaluator | null>(null);
-  const toastIdRef = useRef(0);
 
   mutedRef.current = settings.muted;
   capturePausedRef.current = capturePaused;
@@ -293,12 +248,6 @@ function App() {
   identityWeightsRef.current = identityWeights;
   gnmExpressionWeightsRef.current = gnmExpressionWeights;
   outputOwnerPhaseRef.current = outputOwnerPhase;
-
-  const pushToast = useCallback((toast: Omit<ToastMessage, "id">) => {
-    const message = { ...toast, id: ++toastIdRef.current };
-    setToasts((current) => [...current.slice(-3), message]);
-    return message.id;
-  }, []);
 
   const storeAvatarMotion = useCallback((sample: AvatarMotionSample, frameTimestamp: number) => {
     latestAvatarMotionRef.current = { timestamp: frameTimestamp, sample };
@@ -432,11 +381,6 @@ function App() {
   }, [outputOwnerPhase, pushToast, recordingState, rejectOutputWaiters]);
 
   useEffect(() => {
-    localStorage.setItem("gnm-studio-settings", JSON.stringify(settings));
-    localStorage.setItem("gnm-studio-settings-version", String(settingsStorageVersion));
-  }, [settings]);
-
-  useEffect(() => {
     if (!isDesktopRuntime || settings.videoEncoderBackend === "webcodecs") {
       setFfmpegStatus("unknown");
       setFfmpegVersion("");
@@ -462,38 +406,6 @@ function App() {
   }, [settings.ffmpegPath, settings.videoEncoderBackend]);
 
   useEffect(() => {
-    let disposed = false;
-    loadBackgroundImage()
-      .then((stored) => {
-        if (disposed || !stored?.blob) return;
-        const url = URL.createObjectURL(stored.blob);
-        backgroundObjectUrlRef.current = url;
-        setBackgroundImageUrl(url);
-        setBackgroundImageName(stored.name);
-      })
-      .catch((error) => setDeviceError(`Custom background: ${String(error)}`));
-    return () => {
-      disposed = true;
-      const currentUrl = backgroundObjectUrlRef.current;
-      const recordedUrl = recordedAppearanceRef.current?.backgroundImageUrl;
-      if (currentUrl) URL.revokeObjectURL(currentUrl);
-      if (recordedUrl && recordedUrl !== currentUrl) URL.revokeObjectURL(recordedUrl);
-    };
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.accent = accent;
-    document.documentElement.dataset.edition = isWebEdition ? "web" : "desktop";
-    document.documentElement.style.colorScheme = theme;
-    localStorage.setItem("gnm-studio-theme", theme);
-    localStorage.setItem("gnm-studio-accent", accent);
-    localStorage.setItem("gnm-studio-ui-scale", String(uiScale));
-  }, [accent, theme, uiScale]);
-
-  useEffect(() => localStorage.setItem("gnm-studio-left-sidebar-collapsed", String(leftSidebarCollapsed)), [leftSidebarCollapsed]);
-  useEffect(() => localStorage.setItem("gnm-studio-right-sidebar-collapsed", String(rightSidebarCollapsed)), [rightSidebarCollapsed]);
-  useEffect(() => {
     try {
       saveStoredPresets(fullStatePresets);
     } catch (error) {
@@ -509,15 +421,6 @@ function App() {
   }, [recordedFrames]);
 
   useEffect(() => {
-    if (!settingsOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSettingsOpen(false);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [settingsOpen]);
-
-  useEffect(() => {
     if (!backendMenu) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setBackendMenu(null);
@@ -525,84 +428,6 @@ function App() {
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [backendMenu]);
-
-  const clearOutputHideTimer = useCallback(() => {
-    if (outputHideTimerRef.current !== null) window.clearTimeout(outputHideTimerRef.current);
-    outputHideTimerRef.current = null;
-  }, []);
-
-  const scheduleOutputControls = useCallback(() => {
-    clearOutputHideTimer();
-    if (!fullscreen) {
-      setOutputControlsHidden(false);
-      return;
-    }
-    const pinnedState = pinnedFullscreenControlsState(fullscreenControlsOverride, settings.outputAlwaysHideControls);
-    if (pinnedState !== null) {
-      setOutputControlsHidden(pinnedState);
-      return;
-    }
-    setOutputControlsHidden(false);
-    if (settings.outputAutoHideEnabled) {
-      outputHideTimerRef.current = window.setTimeout(
-        () => setOutputControlsHidden(true),
-        Math.max(0.5, settings.outputAutoHideDelay) * 1_000,
-      );
-    }
-  }, [clearOutputHideTimer, fullscreen, fullscreenControlsOverride, settings.outputAlwaysHideControls, settings.outputAutoHideDelay, settings.outputAutoHideEnabled]);
-
-  const exitFullscreenView = useCallback(async () => {
-    try {
-      if (isDesktopRuntime) {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        await getCurrentWindow().setFullscreen(false);
-      } else if (document.fullscreenElement) {
-        await document.exitFullscreen();
-      }
-    } catch (error) {
-      setDeviceError(`Exit fullscreen: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setFullscreen(false);
-      setOutputControlsHidden(false);
-      setFullscreenControlsOverride(null);
-      clearOutputHideTimer();
-    }
-  }, [clearOutputHideTimer]);
-
-  useEffect(() => {
-    if (!fullscreen) return;
-    scheduleOutputControls();
-    const handleKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
-      if (event.key === "Escape") void exitFullscreenView();
-      if (event.key.toLowerCase() === "h") {
-        event.preventDefault();
-        clearOutputHideTimer();
-        const nextOverride = toggledFullscreenControlsOverride(outputControlsHidden);
-        setFullscreenControlsOverride(nextOverride);
-        setOutputControlsHidden(nextOverride === "hidden");
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => {
-      window.removeEventListener("keydown", handleKey);
-      clearOutputHideTimer();
-    };
-  }, [clearOutputHideTimer, exitFullscreenView, fullscreen, outputControlsHidden, scheduleOutputControls]);
-
-  useEffect(() => {
-    if (isDesktopRuntime) return;
-    const syncFullscreen = () => {
-      if (!document.fullscreenElement) {
-        setFullscreen(false);
-        setOutputControlsHidden(false);
-        setFullscreenControlsOverride(null);
-      }
-    };
-    document.addEventListener("fullscreenchange", syncFullscreen);
-    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
-  }, []);
 
   useEffect(() => {
     const suppressContextMenu = (event: MouseEvent) => event.preventDefault();
@@ -922,7 +747,7 @@ function App() {
     neutralFrameRef.current = snapshot.neutralFrame;
     mouthOpenGateRef.current.reset();
     setForcedViewState(snapshot.viewState);
-    if (snapshot.backgroundImageUrl) setBackgroundImageUrl(snapshot.backgroundImageUrl);
+    if (snapshot.backgroundImageUrl) adoptBackgroundImageUrl(snapshot.backgroundImageUrl);
     pushToast({ type: "success", title: "Preset loaded", message: `${preset.name} was restored and is being evaluated locally.` });
   };
 
@@ -983,6 +808,15 @@ function App() {
     setSettings((current) => ({ ...current, [key]: value }));
   };
 
+  const { backgroundImageUrl, backgroundImageName, chooseBackgroundImage, clearBackgroundImage, adoptBackgroundImageUrl } = useBackgroundImage({
+    getRetainedUrl: () => recordedAppearanceRef.current?.backgroundImageUrl ?? null,
+    setImageMode: () => updateSetting("backgroundMode", "image"),
+    setStudioMode: () => updateSetting("backgroundMode", "studio"),
+    onSuccess: (title, message) => pushToast({ type: "success", title, message }),
+    onInfo: (title, message) => pushToast({ type: "info", title, message }),
+    onError: setDeviceError,
+  });
+
   const setCaptureProcessingPaused = (paused: boolean, synchronizeRecording: boolean) => {
     if (calibrating || captureFinalizing) return;
     if (synchronizeRecording && recordingState !== "idle") {
@@ -1042,55 +876,6 @@ function App() {
     window.addEventListener("keydown", toggleFromKeyboard);
     return () => window.removeEventListener("keydown", toggleFromKeyboard);
   });
-
-  const chooseBackgroundImage = async (file: File | undefined) => {
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setDeviceError(`Custom background: ${file.name} is not a supported image file.`);
-      return;
-    }
-    if (file.size > 50 * 1024 * 1024) {
-      setDeviceError("Custom background: choose an image smaller than 50 MB.");
-      return;
-    }
-    try {
-      const bitmap = await createImageBitmap(file);
-      const dimensions = `${bitmap.width} × ${bitmap.height}`;
-      bitmap.close();
-      await saveBackgroundImage({ blob: file, name: file.name });
-      if (backgroundObjectUrlRef.current && backgroundObjectUrlRef.current !== recordedAppearanceRef.current?.backgroundImageUrl) {
-        URL.revokeObjectURL(backgroundObjectUrlRef.current);
-      }
-      const url = URL.createObjectURL(file);
-      backgroundObjectUrlRef.current = url;
-      setBackgroundImageUrl(url);
-      setBackgroundImageName(file.name);
-      updateSetting("backgroundMode", "image");
-      pushToast({
-        type: "success",
-        title: backgroundImageUrl ? "Background replaced" : "Background added",
-        message: `${file.name} (${dimensions}) is stored locally. Its aspect ratio will be preserved.`,
-      });
-    } catch (error) {
-      setDeviceError(`Custom background: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const clearBackgroundImage = async () => {
-    try {
-      await removeBackgroundImage();
-      if (backgroundObjectUrlRef.current && backgroundObjectUrlRef.current !== recordedAppearanceRef.current?.backgroundImageUrl) {
-        URL.revokeObjectURL(backgroundObjectUrlRef.current);
-      }
-      backgroundObjectUrlRef.current = null;
-      setBackgroundImageUrl(null);
-      setBackgroundImageName("");
-      updateSetting("backgroundMode", "studio");
-      pushToast({ type: "info", title: "Custom background removed", message: "The locally stored image was cleared." });
-    } catch (error) {
-      setDeviceError(`Remove custom background: ${String(error)}`);
-    }
-  };
 
   const activateWorkspace = (workspace: Workspace) => {
     setActiveWorkspace(workspace);
@@ -1196,26 +981,6 @@ function App() {
       message: backend === "auto" ? "MediaPipe will try GPU first and fall back to CPU." : `MediaPipe will restart using ${backend.toUpperCase()} only.`,
       duration: 4_000,
     });
-  };
-
-  const toggleFullscreen = async () => {
-    if (fullscreen) {
-      await exitFullscreenView();
-      return;
-    }
-    try {
-      if (isDesktopRuntime) {
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        await getCurrentWindow().setFullscreen(true);
-      } else {
-        await document.documentElement.requestFullscreen();
-      }
-      setFullscreen(true);
-      setFullscreenControlsOverride(null);
-      setOutputControlsHidden(settings.outputAlwaysHideControls);
-    } catch (error) {
-      setDeviceError(`Enter fullscreen: ${error instanceof Error ? error.message : String(error)}`);
-    }
   };
 
   const postToOutput = (command: MainToOutputCommand) => {
@@ -1426,7 +1191,7 @@ function App() {
       microphoneId: microphoneOptions.some((device) => device.id === current.microphoneId)
         ? current.microphoneId : microphoneOptions[0]?.id ?? "",
     }));
-  }, []);
+  }, [setSettings]);
 
   useEffect(() => {
     enumerateDevices();
@@ -3053,7 +2818,7 @@ function App() {
       />
       <ToastCenter
         toasts={toasts}
-        onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
+        onDismiss={dismissToast}
       />
       <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void importPresetBundle(file)} />
     </main>
