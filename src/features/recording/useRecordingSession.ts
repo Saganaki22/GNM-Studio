@@ -145,8 +145,8 @@ export function useRecordingSession(options: RecordingSessionOptions) {
     if (current.output.isActive() && settings.recordingMode !== "motion" && !settings.showAvatar) {
       current.onToast({
         type: "warning",
-        title: "Avatar layer is disabled",
-        message: "The canvas-only output window cannot record a camera-only take. Enable the avatar layer, close the popout to record the camera composite in Studio, or choose Motion data.",
+        title: "Popout avatar layer is disabled",
+        message: "The clean popout intentionally excludes webcam pixels. Enable the avatar before recording there, or bring the canvas back for a camera composite.",
       });
       return;
     }
