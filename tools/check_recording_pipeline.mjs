@@ -87,7 +87,9 @@ assert.equal(parsedV2.appearance?.settings.exportFps, 60);
 assert.equal(parsedV2.appearance?.identityParameters.presentationStrength, -0.75);
 assert.deepEqual(Array.from(parsedV2.appearance?.identityVertices ?? []), [0, 1, 2]);
 
-const app = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
+const app = ["../src/App.tsx", "../src/features/recording/TransportDock.tsx"]
+  .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
+  .join("\n");
 for (const marker of [
   "pendingAvatarMotionFramesRef.current.set",
   "pendingFrame.avatarMotion = sample",

@@ -1,23 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  Camera as PhosphorCamera, Microphone as PhosphorMicrophone,
-  Pause as PhosphorPause, Play as PhosphorPlay,
-} from "@phosphor-icons/react";
-import {
-  Aperture, ArrowLeftRight, Box, Camera, Check, ChevronDown, CircleStop, Cpu, Download, Eye,
-  FlipHorizontal2, Gauge, ImagePlus, Layers3, Maximize2, Minimize2, Moon, Pause, Play,
-  PictureInPicture2, RefreshCw, RotateCcw, Settings2, SlidersHorizontal, Sparkles, Sun, Upload, Video,
-  WandSparkles, X, Zap,
-} from "lucide-react";
-import { AudioMeter } from "./components/AudioMeter";
-import { ExportWorkspace } from "./components/ExportWorkspace";
-import { ExpressionControl } from "./components/ExpressionControl";
-import { FpsInput } from "./components/FpsInput";
-import { GnmExpressionEditor } from "./components/GnmExpressionEditor";
-import { GithubMark } from "./components/GithubMark";
-import { JointControl } from "./components/JointControl";
-import { Stage } from "./components/Stage";
+import { AvatarAppearancePanels } from "./features/avatar/AvatarAppearancePanels";
+import { AvatarModelPanel } from "./features/avatar/AvatarModelPanel";
+import { CaptureSidebarContent } from "./features/devices/CaptureSidebarContent";
+import { SettingsPopover } from "./features/settings/SettingsPopover";
+import { RightSidebar } from "./features/stage/RightSidebar";
+import { StudioViewport } from "./features/stage/StudioViewport";
+import { DeviceAccessPrompt } from "./features/devices/DeviceAccessPrompt";
+import { ExpressionPanel } from "./features/expression/ExpressionPanel";
+import { IdentityPanel } from "./features/identity/IdentityPanel";
+import { PresetPanel } from "./features/presets/PresetPanel";
+import { TransportDock } from "./features/recording/TransportDock";
+import { LeftSidebar } from "./features/shell/LeftSidebar";
+import { StudioFileInputs } from "./features/shell/StudioFileInputs";
+import { StudioTopBar } from "./features/shell/StudioTopBar";
+import { BackendMenu } from "./features/tracking/BackendMenu";
 import { ToastCenter, type ToastMessage } from "./components/ToastCenter";
 import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
 import { createAnimatedGlb } from "./lib/glbExport";
@@ -25,14 +22,12 @@ import { loadBackgroundImage, removeBackgroundImage, saveBackgroundImage } from 
 import { DenseDecoder, expressionDecoderInput, weightedIdentityDecoderInput } from "./lib/decoder";
 import { identityVertexCount } from "./lib/identityVertices";
 import type { WebIdentityEvaluator } from "./lib/webIdentity";
-import { avatarProfiles, facecapControlGroups, facecapInfluences } from "./lib/avatarProfiles";
+import { avatarProfiles, facecapInfluences } from "./lib/avatarProfiles";
 import {
   outputChannelName, type MainToOutputCommand, type MainToOutputMessage, type OutputOwnerPhase, type OutputSnapshot, type OutputToMainMessage,
 } from "./lib/outputChannel";
 import { parseMotionFile } from "./lib/motionFile";
 import { MouthOpenGate, mouthOpenInfluence, semanticExpressionNames, semanticInfluences } from "./lib/retarget";
-import { skinToneOptions } from "./lib/skinMaterial";
-import { eyeColorOptions } from "./lib/gnmEyes";
 import { AdaptiveTrackingSmoother } from "./lib/trackingSmoothing";
 import { assetUrl } from "./lib/assets";
 import type { ViewportSize } from "./lib/coverProjection";
@@ -49,9 +44,8 @@ import {
   type FullscreenControlsOverride,
 } from "./lib/fullscreenControls";
 import type {
-  AppSettings, AvatarKind, AvatarMotionSample, CameraViewState, DeviceOption, FaceAlignment,
-  IdentityVertices, RecordedFrame, RecordedTakeSnapshot, RecordingMode, TrackingBackend, TrackingFrame,
-  VideoEncoderBackend,
+  AppSettings, AvatarMotionSample, CameraViewState, DeviceOption, FaceAlignment,
+  IdentityVertices, RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
 } from "./types";
 import { canvasPngBlob } from "./lib/canvasCapture";
 import { createStoredZip } from "./lib/zipStore";
@@ -65,8 +59,8 @@ import { trimAndRetimeMotion } from "./lib/motionEdit";
 import { afterBrowserPaint, formatTime, timestampedFilename } from "./lib/studioFormat";
 import { applyNeutralBaseline, estimateTrackingQuality, playbackTrackingFrame, recordedFrameAtTime } from "./lib/trackingFrames";
 import {
-  accentOptions, brandHeadIconStyle, initialSettings, isDesktopRuntime, isWebEdition,
-  manualJointGroups, releasesUrl, repositoryUrl, settingsStorageVersion, type AccentOption, type BackendProbe,
+  accentOptions, initialSettings, isDesktopRuntime, isWebEdition,
+  manualJointGroups, settingsStorageVersion, type AccentOption, type BackendProbe,
   type FfmpegProbe, type Workspace,
 } from "./app/studioConfig";
 import "./App.css";
@@ -2933,571 +2927,138 @@ function App() {
       style={{ "--ui-scale": (uiScale / 100).toFixed(2) } as React.CSSProperties}
       onPointerMove={fullscreen ? scheduleOutputControls : undefined}
     >
-      <header className="topbar">
-        <div className="brand"><span className="brand-mark"><span className="brand-head-icon" style={brandHeadIconStyle} /></span><div><strong>GNM</strong><span>Studio</span></div>{isWebEdition && <small className="edition-badge">WEB</small>}</div>
-        <nav className="workspace-tabs" aria-label="Workspace">
-          {(["capture", "create", "edit", "export"] as Workspace[]).map((workspace) => (
-            <button
-              type="button"
-              key={workspace}
-              className={activeWorkspace === workspace ? "active" : ""}
-              aria-current={activeWorkspace === workspace ? "page" : undefined}
-              onClick={() => activateWorkspace(workspace)}
-            >
-              {workspace[0].toUpperCase() + workspace.slice(1)}
-            </button>
-          ))}
-        </nav>
-        <div className="system-status">
-          <button type="button" className={`capture-pause-button ${capturePaused ? "paused" : ""}`} onClick={toggleCaptureProcessing} disabled={calibrating || captureFinalizing || (cameraAccess !== "ready" && microphoneAccess !== "ready")} title={capturePaused ? "Resume face tracking, microphone, and any active take (P)" : "Pause face tracking, microphone, and any active take (P)"} aria-label={capturePaused ? "Resume face tracking, microphone, and any active take" : "Pause face tracking, microphone, and any active take"} aria-keyshortcuts="P" aria-pressed={capturePaused}>{capturePaused ? <PhosphorPlay size={15} weight="fill" /> : <PhosphorPause size={15} weight="fill" />}</button>
-          <span className="device-status" title={captureStatusTitle} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); openBackendMenu(event.clientX, event.clientY); }}><span className={`capture-device-icon ${cameraAccess === "ready" ? capturePaused ? "paused" : "ready" : "unavailable"}`} title={`Camera ${cameraAccess === "ready" ? capturePaused ? "paused" : "ready" : "not connected"}`}><PhosphorCamera size={14} weight="fill" /></span><span className={`capture-device-icon ${microphoneAccess === "ready" ? capturePaused ? "paused" : "ready" : "unavailable"}`} title={`Microphone ${microphoneAccess === "ready" ? capturePaused ? "paused" : "ready" : "not connected"}`}><PhosphorMicrophone size={14} weight="fill" /></span><b>{connectedCaptureCount}/2</b></span>
-          <button
-            className={`backend-status ${backendMenu ? "active" : ""}`}
-            title="Click or right-click to choose Auto, GPU, or CPU tracking"
-            aria-haspopup="menu"
-            aria-expanded={Boolean(backendMenu)}
-            onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openBackendMenu(rect.right - 232, rect.bottom + 7); }}
-            onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); openBackendMenu(event.clientX, event.clientY); }}
-          ><i className={trackerStatus === "ready" ? capturePaused ? "paused" : "online" : ""} />{capturePaused && trackerStatus === "ready" ? "Paused" : trackerDelegate}</button>
-          {recordingState !== "idle" && <span className="recording-pill">● REC {formatTime(recordingElapsed)}</span>}
-          <button
-            className={`icon-button ${settingsOpen ? "active" : ""}`}
-            onClick={() => setSettingsOpen((value) => !value)}
-            title="Appearance settings"
-            aria-expanded={settingsOpen}
-          ><Settings2 size={18} /></button>
-        </div>
-      </header>
+      <StudioTopBar
+        web={isWebEdition}
+        workspace={activeWorkspace}
+        activateWorkspace={activateWorkspace}
+        capture={{ paused: capturePaused, calibrating, finalizing: captureFinalizing, cameraAccess, microphoneAccess, statusTitle: captureStatusTitle, connectedCount: connectedCaptureCount, toggle: toggleCaptureProcessing }}
+        backend={{ menuOpen: Boolean(backendMenu), trackerStatus, delegate: trackerDelegate, openMenu: openBackendMenu }}
+        recording={{ state: recordingState, elapsed: recordingElapsed }}
+        settings={{ open: settingsOpen, toggle: () => setSettingsOpen((value) => !value) }}
+      />
 
-      <aside className={`sidebar left-sidebar ${leftSidebarCollapsed ? "collapsed" : ""}`}>
-        <button type="button" className="sidebar-collapse-toggle" aria-label={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"} title={leftSidebarCollapsed ? "Expand left sidebar" : "Collapse left sidebar"} onClick={() => setLeftSidebarCollapsed((value) => !value)}><ChevronDown size={15} /></button>
-        <div className="sidebar-tabs">
-          <button className={activePanel === "avatar" ? "active" : ""} onClick={() => { setActivePanel("avatar"); setActiveWorkspace("create"); }}><WandSparkles size={16} />Avatar</button>
-          <button className={activePanel === "capture" ? "active" : ""} onClick={() => { setActivePanel("capture"); setActiveWorkspace("capture"); }}><Camera size={16} />Capture</button>
-        </div>
-        {activePanel === "avatar" ? (
-          <>
-            <section className="panel-section model-picker" data-workspace-target="create">
-              <div className="section-heading"><span>Mocap model</span><small>Local avatars</small></div>
-              <div className="model-choice-list" role="radiogroup" aria-label="Mocap avatar model">
-                {(["gnm", "facecap"] as AvatarKind[]).map((avatarKind) => {
-                  const selected = settings.avatarKind === avatarKind;
-                  const facecap = avatarKind === "facecap";
-                  return (
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      className={`model-choice-card ${selected ? "active" : ""}`}
-                      key={avatarKind}
-                      onClick={() => {
-                        if (selected) return;
-                        updateSetting("avatarKind", avatarKind);
-                        pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: facecap ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." });
-                      }}
-                    >
-                      <span className="model-choice-icon">{facecap ? <Aperture size={20} /> : <Box size={20} />}</span>
-                      <span className="model-choice-copy">
-                        <strong>{facecap ? "FaceCap 52" : "GNM Head v3"}</strong>
-                        <small>{facecap ? "Direct 52-channel tracking" : "Seeded identity + semantic controls"}</small>
-                      </span>
-                      <span className="model-choice-meta"><em>{facecap ? "MIT" : "GNM"}</em>{selected && <Check size={15} />}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="model-choice-detail">{settings.avatarKind === "gnm" ? `${(gnmInfo?.vertices ?? 17_821).toLocaleString()} vertices · ${(gnmInfo?.identityDimensions ?? 253) + (gnmInfo?.expressionDimensions ?? 383)} native controls` : "52 MediaPipe/ARKit morph targets · bundled offline KTX2 materials"}</p>
-            </section>
-            {activeProfile.supportsIdentity && (
-              <section className="panel-section">
-                <div className="section-heading"><span>Identity</span><button onClick={randomizeIdentity} disabled={identityStatus === "generating" || recordingState !== "idle"}><RefreshCw size={14} />{identityStatus === "generating" ? "Generating" : "Randomize"}</button></div>
-                <label className="field-label">Seed<input className="text-input" value={identitySeed} disabled={recordingState !== "idle"} onChange={(event) => setIdentitySeed(event.target.value)} /></label>
-                <div className="two-up"><label className="field-label">Presentation<select value={identityGender} disabled={recordingState !== "idle"} onChange={(event) => chooseIdentityPresentation(event.target.value as typeof identityGender)}><option value="blend">Blend</option><option value="female">Feminine</option><option value="male">Masculine</option></select></label><label className="field-label">Population<select value={identityEthnicity} disabled={recordingState !== "idle"} onChange={(event) => chooseIdentityPopulation(event.target.value as typeof identityEthnicity)}><option value="blend">Blend</option><option value="asian">Asian</option><option value="black">Black</option><option value="middle_eastern">Middle Eastern</option><option value="white">White</option></select></label></div>
-                <label className="slider-row identity-presentation-strength"><span>Feminine</span><input type="range" min="-100" max="100" step="1" value={identityPresentationStrength * 100} disabled={recordingState !== "idle"} onChange={(event) => { const value = Number(event.target.value) / 100; setIdentityPresentationStrength(value); setIdentityGender(Math.abs(value) < 0.01 ? "blend" : value < 0 ? "female" : "male"); }} /><output>{Math.round(identityPresentationStrength * 100)}</output><small>Masculine</small></label>
-                <button type="button" className="secondary-button wide identity-compare" disabled={recordingState !== "idle"} onClick={compareIdentityPresentation}><ArrowLeftRight size={13} />Compare feminine / masculine with this seed</button>
-                <details className="advanced-expression identity-population-blend">
-                  <summary><SlidersHorizontal size={14} />Population blend<small>Weighted</small></summary>
-                  {(["Middle Eastern", "Asian", "White", "Black"] as const).map((label, index) => <label className="slider-row" key={label}><span>{label}</span><input type="range" min="0" max="100" value={identityPopulationWeights[index] * 100} disabled={recordingState !== "idle"} onChange={(event) => updateIdentityPopulationWeight(index, Number(event.target.value) / 100)} /><output>{Math.round(identityPopulationWeights[index] * 100)}</output></label>)}
-                </details>
-                <button className="secondary-button wide" onClick={() => void generateIdentity()} disabled={identityStatus === "generating" || recordingState !== "idle"}>{identityStatus === "generating" ? isWebEdition ? webIdentityBackend === "webgpu" ? "Building with WebGPU…" : "Building in web worker…" : "Building GNM mesh…" : isWebEdition ? "Apply identity locally" : "Apply identity"}</button>
-                {isWebEdition && <p className="helper-copy web-edition-note">The compressed identity runtime evaluates locally in a dedicated worker. {webIdentityBackend === "webgpu" ? "WebGPU compute is active." : webIdentityBackend === "cpu" ? "This device is using the compatible CPU-worker fallback." : "WebGPU is selected automatically when this browser supports it."} Camera tracking and the interface remain responsive.</p>}
-              </section>
-            )}
-            <details className="panel-section experimental-skin full-state-presets">
-              <summary><span><strong>Named presets</strong><small>Full model state</small></span><span className="skin-summary-state">{fullStatePresets.length} saved<ChevronDown size={14} /></span></summary>
-              <div className="experimental-skin-content">
-                <label className="field-label">Saved preset<select value={selectedPresetId} disabled={!fullStatePresets.length || recordingState !== "idle"} onChange={(event) => { const id = event.target.value; setSelectedPresetId(id); const preset = fullStatePresets.find((entry) => entry.id === id); if (preset) setPresetName(preset.name); }}><option value="">{fullStatePresets.length ? "Choose a preset" : "No presets saved"}</option>{fullStatePresets.map((preset) => <option value={preset.id} key={preset.id}>{preset.name}</option>)}</select></label>
-                <label className="field-label">Preset name<input value={presetName} maxLength={80} disabled={recordingState !== "idle"} onChange={(event) => setPresetName(event.target.value)} /></label>
-                <div className="preset-action-grid">
-                  <button type="button" className="primary-button" disabled={recordingState !== "idle" || !presetName.trim()} onClick={saveNewFullStatePreset}>Save new</button>
-                  <button type="button" className="secondary-button" disabled={recordingState !== "idle" || !selectedPresetId} onClick={loadSelectedFullStatePreset}>Load</button>
-                  <button type="button" className="secondary-button" disabled={recordingState !== "idle" || !selectedPresetId} onClick={updateSelectedFullStatePreset}>Update</button>
-                  <button type="button" className="secondary-button" disabled={recordingState !== "idle" || !selectedPresetId || !presetName.trim()} onClick={renameSelectedFullStatePreset}>Rename</button>
-                  <button type="button" className="secondary-button danger" disabled={recordingState !== "idle" || !selectedPresetId} onClick={deleteSelectedFullStatePreset}>Delete</button>
-                </div>
-                <div className="preset-bundle-actions"><button type="button" className="secondary-button" disabled={recordingState !== "idle"} onClick={() => presetInputRef.current?.click()}><Upload size={13} />Import bundle</button><button type="button" className="secondary-button" disabled={!fullStatePresets.length} onClick={() => void exportPresetBundle()}><Download size={13} />Export bundle</button></div>
-                <p className="helper-copy">Presets include the avatar, identity conditioning, all 383 GNM values, manual/frozen controls, materials, layers, calibration and view. Bundles are version-checked before loading.</p>
-              </div>
-            </details>
-            <details className="panel-section experimental-skin">
-              <summary><span><strong>Skin material</strong><small>Experimental</small></span><span className={settings.skinTextureEnabled ? "skin-summary-state enabled" : "skin-summary-state"}>{settings.skinTextureEnabled ? "Microtexture on" : "Microtexture off"}<ChevronDown size={14} /></span></summary>
-              <div className="experimental-skin-content">
-                <label className={`toggle-row ${settings.skinTextureEnabled ? "is-active" : ""}`}><span>Skin microtexture<small>{settings.skinTextureEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.skinTextureEnabled} onChange={(event) => updateSetting("skinTextureEnabled", event.target.checked)} /></label>
-                <div className="skin-tone-field">
-                  <span>Base colour · Neutral disables skin tint</span>
-                  <div className="skin-tone-options" role="radiogroup" aria-label="Skin base colour">
-                    {skinToneOptions.map((tone) => <button type="button" key={tone.id} role="radio" aria-checked={settings.skinTone === tone.id} className={settings.skinTone === tone.id ? "active" : ""} style={{ "--skin-tone": tone.swatch } as React.CSSProperties} title={tone.label} onClick={() => updateSetting("skinTone", tone.id)}><span /><small>{tone.label}</small></button>)}
-                  </div>
-                </div>
-                <label className="slider-row"><span>Texture scale</span><input type="range" min="2" max="20" step="0.5" disabled={!settings.skinTextureEnabled} value={settings.skinTextureScale} onChange={(event) => updateSetting("skinTextureScale", Number(event.target.value))} /><output>{settings.skinTextureScale.toFixed(1)}×</output></label>
-                <label className="slider-row"><span>Rotation</span><input type="range" min="-180" max="180" step="1" disabled={!settings.skinTextureEnabled} value={settings.skinTextureRotation} onChange={(event) => updateSetting("skinTextureRotation", Number(event.target.value))} /><output>{settings.skinTextureRotation}°</output></label>
-                <label className="slider-row"><span>Seam feather</span><input type="range" min="0" max="30" step="1" disabled={!settings.skinTextureEnabled} value={settings.skinTextureFeather * 100} onChange={(event) => updateSetting("skinTextureFeather", Number(event.target.value) / 100)} /><output>{Math.round(settings.skinTextureFeather * 100)}%</output></label>
-                <p className="helper-copy">The base pigment works with texture on or off. Studio lighting still creates natural highlights and shadows. Feather blends opposite tile edges; high values soften pore contrast near each repeat.</p>
-              </div>
-            </details>
-            <details className="panel-section experimental-skin eye-appearance">
-              <summary><span><strong>Eye appearance</strong><small>Both avatars</small></span><span className={settings.eyeShaderEnabled ? "skin-summary-state enabled" : "skin-summary-state"}>{settings.eyeShaderEnabled ? eyeColorOptions.find((option) => option.id === settings.eyeColor)?.label : "Original eyes"}<ChevronDown size={14} /></span></summary>
-              <div className="experimental-skin-content">
-                <label className={`toggle-row ${settings.eyeShaderEnabled ? "is-active" : ""}`}><span>Eye shader<small>{settings.eyeShaderEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.eyeShaderEnabled} onChange={(event) => updateSetting("eyeShaderEnabled", event.target.checked)} /></label>
-                <div className="skin-tone-field">
-                  <span>Iris colour</span>
-                  <div className="eye-color-options" role="radiogroup" aria-label="Iris colour">
-                    {eyeColorOptions.map((option) => <button type="button" key={option.id} role="radio" aria-checked={settings.eyeColor === option.id} className={settings.eyeColor === option.id ? "active" : ""} disabled={!settings.eyeShaderEnabled} style={{ "--eye-color": option.swatch } as React.CSSProperties} title={option.label} onClick={() => updateSetting("eyeColor", option.id)}><span /><small>{option.label}</small></button>)}
-                  </div>
-                </div>
-                <p className="helper-copy">The shader preserves black pupils, natural sclera, highlights and tracked gaze. Turn it off to use the model's original eye appearance.</p>
-              </div>
-            </details>
-            <section className="panel-section" data-workspace-target="edit">
-              <div className="section-heading"><span>Expression</span><small>{Object.keys(frozenExpressions).length ? `${Object.keys(frozenExpressions).length} frozen` : `${activeProfile.expressionCount} ${activeProfile.shortLabel} controls`}</small></div>
-              {settings.avatarKind === "gnm" && semanticExpressionNames.slice(0, 6).map((name) => (
-                <ExpressionControl
-                  key={name}
-                  name={name}
-                  value={name in frozenExpressions ? frozenExpressions[name] : manualExpressions[name] ?? 0}
-                  frozen={name in frozenExpressions}
-                  onChange={(value) => setManualExpressions((current) => ({ ...current, [name]: value }))}
-                  onToggle={() => toggleExpressionFreeze(name)}
-                />
-              ))}
-              {settings.avatarKind === "gnm" && <details className="advanced-expression">
-                <summary><SlidersHorizontal size={15} />All semantic controls</summary>
-                {semanticExpressionNames.slice(6).map((name) => (
-                  <ExpressionControl
-                    key={name}
-                    name={name}
-                    value={name in frozenExpressions ? frozenExpressions[name] : manualExpressions[name] ?? 0}
-                    frozen={name in frozenExpressions}
-                    onChange={(value) => setManualExpressions((current) => ({ ...current, [name]: value }))}
-                    onToggle={() => toggleExpressionFreeze(name)}
-                  />
-                ))}
-              </details>}
-              {settings.avatarKind === "gnm" && <GnmExpressionEditor
-                semanticNames={semanticExpressionNames}
-                semanticA={gnmExpressionA}
-                semanticB={gnmExpressionB}
-                seedA={gnmExpressionSeedA}
-                seedB={gnmExpressionSeedB}
-                blend={gnmExpressionBlend}
-                weights={gnmExpressionWeights}
-                frozen={gnmFrozenExpressionComponents}
-                ready={expressionDecoderReady}
-                busy={gnmExpressionStatus === "evaluating"}
-                backend={isDesktopRuntime ? "Native Rust" : webIdentityBackend === "webgpu" ? "WebGPU worker" : "CPU worker"}
-                disabled={recordingState !== "idle" || captureFinalizing}
-                onSemanticA={(value) => { setGnmExpressionA(value); setGnmExpressionAbActive(true); }}
-                onSemanticB={(value) => { setGnmExpressionB(value); setGnmExpressionAbActive(true); }}
-                onSeedA={(value) => { setGnmExpressionSeedA(value); setGnmExpressionAbActive(true); }}
-                onSeedB={(value) => { setGnmExpressionSeedB(value); setGnmExpressionAbActive(true); }}
-                onResampleA={() => resampleExpressionSeed("a")}
-                onResampleB={() => resampleExpressionSeed("b")}
-                onBlend={(value) => { setGnmExpressionBlend(value); setGnmExpressionAbActive(true); }}
-                onWeight={setRawGnmExpressionWeight}
-                onToggleFreeze={toggleRawGnmExpressionFreeze}
-                onMirror={mirrorRawGnmExpression}
-                onReset={resetRawGnmExpression}
-              />}
-              <details className="advanced-expression manual-joint-controls">
-                <summary><SlidersHorizontal size={15} />Neck, head, eyes and XYZ<small>Offsets</small></summary>
-                <p className="helper-copy">Signed offsets layer on top of webcam motion. Freeze any channel to keep that value while the remaining tracked controls continue moving.</p>
-                {manualJointGroups.map((group) => <div className="joint-control-group" key={group.label}><strong>{group.label}</strong>{group.controls.map(([name, label]) => <JointControl key={name} name={name} label={label} value={name in frozenExpressions ? frozenExpressions[name] : manualExpressions[name] ?? 0} frozen={name in frozenExpressions} unit={group.unit ?? "°"} onChange={(value) => setManualExpressions((current) => ({ ...current, [name]: value }))} onToggle={() => toggleExpressionFreeze(name)} />)}</div>)}
-                <button type="button" className="secondary-button wide" onClick={() => { const names = new Set<string>(manualJointGroups.flatMap((group) => group.controls.map(([name]) => name))); setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); }}><RotateCcw size={14} />Reset joint offsets and locks</button>
-              </details>
-              {settings.avatarKind === "facecap" && facecapControlGroups.map((group, index) => (
-                <details className="advanced-expression facecap-expression-group" open={index === 3 || index === 4} key={group.label}>
-                  <summary><SlidersHorizontal size={15} />{group.label}<small>{group.names.length}</small></summary>
-                  {group.names.map((name) => (
-                    <ExpressionControl
-                      key={name}
-                      name={name}
-                      value={name in frozenExpressions ? frozenExpressions[name] : manualExpressions[name] ?? 0}
-                      frozen={name in frozenExpressions}
-                      onChange={(value) => setManualExpressions((current) => ({ ...current, [name]: value }))}
-                      onToggle={() => toggleExpressionFreeze(name)}
-                    />
-                  ))}
-                </details>
-              ))}
-              <button className="secondary-button wide" onClick={resetActiveExpressions}><RotateCcw size={15} />Reset {activeProfile.shortLabel} expressions and locks</button>
-            </section>
-          </>
-        ) : (
-          <>
-            <section className="panel-section" data-workspace-target="capture"><div className="section-heading"><span>Camera input</span><button onClick={enumerateDevices}><RefreshCw size={14} /></button></div><label className="field-label">Device<select value={settings.cameraId} disabled={!cameras.length} onChange={(event) => updateSetting("cameraId", event.target.value)}>{!cameras.length && <option value="">No camera available</option>}{cameras.map((device) => <option value={device.id} key={device.id}>{device.label}</option>)}</select></label><FpsInput label="Requested FPS" value={settings.cameraFps} onChange={(value) => updateSetting("cameraFps", value)} />{cameraAccess !== "ready" && <button className="secondary-button wide" onClick={requestDeviceAccess} disabled={permissionState === "asking"}><Aperture size={15} />{permissionState === "asking" ? "Waiting for access…" : "Connect capture devices"}</button>}<p className="helper-copy capture-optional">Camera access is optional. The avatar editor and avatar-video recording work without it.</p></section>
-            <section className="panel-section">
-              <div className="section-heading"><span>Record type</span><small>What the red button captures</small></div>
-              <div className="record-type-picker" role="radiogroup" aria-label="Record type">
-                {(["motion", "avatar", "composite"] as RecordingMode[]).map((mode) => {
-                  const label = mode === "motion" ? "Motion" : mode === "avatar" ? "Avatar" : "Composite";
-                  return <button type="button" role="radio" aria-checked={settings.recordingMode === mode} className={settings.recordingMode === mode ? "active" : ""} key={mode} onClick={() => updateSetting("recordingMode", mode)}>{label}</button>;
-                })}
-              </div>
-              <p className="record-type-description">{settings.recordingMode === "motion"
-                ? "Editable mocap, neutral-relative XYZ, rotation, scale and optional microphone audio for JSON, GLB or later video rendering."
-                : settings.recordingMode === "avatar"
-                  ? "A flattened recording of the rendered avatar and its selected background, without the webcam layer."
-                  : "A flattened recording of the exact camera + avatar composition shown by the enabled layers."}</p>
-              <details className="advanced-expression encoder-quality">
-                <summary><SlidersHorizontal size={15} />Encoder quality</summary>
-                <label className="field-label encoder-backend">MP4 backend
-                  <select value={settings.videoEncoderBackend} disabled={isWebEdition} onChange={(event) => updateSetting("videoEncoderBackend", event.target.value as VideoEncoderBackend)}>
-                    {!isWebEdition && <option value="auto">Auto · FFmpeg then WebCodecs</option>}
-                    <option value="webcodecs">Portable WebCodecs</option>
-                    {!isWebEdition && <option value="ffmpeg">System FFmpeg</option>}
-                  </select>
-                </label>
-                {!isWebEdition && settings.videoEncoderBackend !== "webcodecs" && (
-                  <div className="ffmpeg-controls">
-                    <label className="field-label">FFmpeg command or path<input type="text" value={settings.ffmpegPath} spellCheck={false} onChange={(event) => updateSetting("ffmpegPath", event.target.value)} /></label>
-                    <div className={`ffmpeg-status ${ffmpegStatus}`}><i /><span>{ffmpegStatus === "checking" ? "Checking…" : ffmpegStatus === "available" ? "FFmpeg available" : ffmpegStatus === "unavailable" ? settings.videoEncoderBackend === "auto" ? "Unavailable · Auto will use WebCodecs" : "FFmpeg unavailable" : "Not checked"}</span></div>
-                    {ffmpegVersion && <small className="ffmpeg-version" title={ffmpegVersion}>{ffmpegVersion}</small>}
-                    <div className="encoder-backend-actions">
-                      <button type="button" className="secondary-button" onClick={() => void checkFfmpeg()}><RefreshCw size={13} />Check</button>
-                      <button type="button" className="secondary-button" onClick={() => void chooseFfmpegExecutable()}>Choose .exe</button>
-                      <button type="button" className="secondary-button" onClick={() => void openExternal("https://ffmpeg.org/download.html")}><Download size={13} />Get FFmpeg</button>
-                    </div>
-                  </div>
-                )}
-                <label className="slider-row bitrate-slider"><span>Video</span><input type="range" min="1" max="50" step="1" value={settings.videoBitrateMbps} onChange={(event) => updateSetting("videoBitrateMbps", Number(event.target.value))} /><output>{settings.videoBitrateMbps} Mbps</output></label>
-                <label className="slider-row bitrate-slider"><span>Audio</span><input type="range" min="64" max="320" step="16" value={settings.audioBitrateKbps} onChange={(event) => updateSetting("audioBitrateKbps", Number(event.target.value))} /><output>{settings.audioBitrateKbps} kbps</output></label>
-                <p className="helper-copy">{isWebEdition ? "The web edition uses local browser WebCodecs; availability depends on the browser and GPU driver. " : "Applied to direct recording and offline MP4 conversion. "}Defaults: 12 Mbps H.264 and 192 kbps AAC.</p>
-              </details>
-            </section>
-          </>
-        )}
-      </aside>
-
-      <section className="viewport-column">
-        <div className="viewport-toolbar">
-          {activeWorkspace === "export" ? (
-            <div className="export-toolbar-title"><Download size={16} /><span>Export workspace</span><small>The renderer stays mounted behind this panel so captures retain the exact take state.</small></div>
-          ) : (<>
-          <div className="segmented view-mode-switch" aria-label="Viewport layers">
-            <button disabled={calibrating} className={settings.showWebcam && settings.showAvatar ? "active" : ""} aria-pressed={settings.showWebcam && settings.showAvatar} onClick={() => { updateSetting("showWebcam", true); updateSetting("showAvatar", true); }}>Overlay</button>
-            <button disabled={calibrating} className={settings.showWebcam && !settings.showAvatar ? "active" : ""} aria-pressed={settings.showWebcam && !settings.showAvatar} onClick={() => { updateSetting("showWebcam", true); updateSetting("showAvatar", false); }}>Camera</button>
-            <button disabled={calibrating} className={!settings.showWebcam && settings.showAvatar ? "active" : ""} aria-pressed={!settings.showWebcam && settings.showAvatar} onClick={() => { updateSetting("showWebcam", false); updateSetting("showAvatar", true); }}>Avatar</button>
-          </div>
-          <div className="toolbar-actions"><button className="icon-button" title="Save a PNG photo of the exact canvas" disabled={calibrating || videoExportProgress !== null || pngSequenceRendering} onClick={() => void captureStill()}><PhosphorCamera size={17} weight="duotone" /></button><button disabled={calibrating} className={`icon-button ${settings.mirror ? "active" : ""}`} title={settings.mirror ? "Mirrored camera and motion" : "Raw camera and motion"} aria-pressed={settings.mirror} onClick={() => updateSetting("mirror", !settings.mirror)}><FlipHorizontal2 size={16} /></button><button className="icon-button" title="Reset view" onClick={() => setResetViewSignal((value) => value + 1)}><RotateCcw size={16} /></button><button className={`icon-button ${popoutState !== "idle" ? "active" : ""}`} title={popoutState === "idle" ? "Open a clean canvas-only output window" : popoutState === "starting" ? "Output popout is connecting" : "Focus output popout"} aria-pressed={popoutState !== "idle"} disabled={calibrating || popoutState === "starting" || (popoutState === "idle" && recordingState !== "idle")} onClick={() => void openOutputPopout()}><PictureInPicture2 size={16} /></button><button className={`icon-button ${fullscreen ? "active" : ""}`} title={fullscreen ? "Exit fullscreen output (Esc)" : "Fullscreen canvas output"} aria-pressed={fullscreen} disabled={popoutState !== "idle"} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button></div>
-          </>)}
-        </div>
-        {popoutState !== "idle" && <video ref={videoRef} className="tracking-video-hidden" autoPlay muted playsInline />}
-        {popoutState === "idle" ? (
-        <Stage
-          avatarKind={stageSettings.avatarKind}
-          videoRef={videoRef}
-          frame={displayedFrame}
-          neutralFrame={stageNeutralFrame}
-          showWebcam={calibrating || stageSettings.showWebcam}
-          showAvatar={!calibrating && (motionVideoRendering || pngSequenceRendering || stageSettings.showAvatar)}
-          showLandmarks={!calibrating && stageSettings.showLandmarks}
-          mirror={stageSettings.mirror}
-          opacity={stageSettings.avatarOpacity}
-          wireframe={stageSettings.wireframe}
-          skinTextureEnabled={stageSettings.skinTextureEnabled}
-          skinTone={stageSettings.skinTone}
-          skinTextureScale={stageSettings.skinTextureScale}
-          skinTextureRotation={stageSettings.skinTextureRotation}
-          skinTextureFeather={stageSettings.skinTextureFeather}
-          eyeShaderEnabled={stageSettings.eyeShaderEnabled}
-          eyeColor={stageSettings.eyeColor}
-          backgroundMode={stageSettings.backgroundMode}
-          backgroundColor={stageSettings.backgroundColor}
-          backgroundImageUrl={stageBackgroundImageUrl}
-          backgroundImageZoom={stageSettings.backgroundImageZoom}
-          mouseLightEnabled={stageSettings.mouseLightEnabled}
-          mouseLightIntensity={stageSettings.mouseLightIntensity}
-          headPoseSettings={{
-            enabled: stageSettings.headRotationEnabled,
-            yawStrength: stageSettings.headYawStrength,
-            pitchStrength: stageSettings.headPitchStrength,
-            rollStrength: stageSettings.headRollStrength,
-            deadZone: stageSettings.headRotationDeadZone,
-            smoothing: stageSettings.headRotationSmoothing,
-          }}
-          calibrating={calibrating}
-          calibrationComplete={calibrationComplete}
-          faceAlignment={calibrationFaceAlignment}
-          countdown={countdown}
-          trackingReady={Boolean(trackingFrame)}
-          identityVertices={stageIdentityVertices}
-          manualExpressions={stageManualExpressions}
-          frozenExpressions={stageFrozenExpressions}
-          recordingMode={motionVideoRendering || pngSequenceRendering ? "avatar" : stageSettings.recordingMode}
-          recordingActive={motionVideoRendering || pngSequenceRendering || recordingState !== "idle"}
-          resetViewSignal={resetViewSignal}
-          viewStateOverride={forcedViewState}
-          onCancelCalibration={cancelCalibration}
-          onCompositeCanvas={handleCompositeCanvas}
-          onStageError={handleStageError}
-          onViewportResize={handleViewportResize}
-          onViewStateChange={handleViewStateChange}
-          onAvatarMotion={storeAvatarMotion}
-        />
-        ) : (
-          <div className="popout-placeholder">
-            <PictureInPicture2 size={38} />
-            <strong>{popoutState === "starting" ? "Opening output canvas…" : "Canvas is live in the popout"}</strong>
-            <span>The popout owns the only 3D renderer. Camera tracking, editing and exports continue here without duplicate GPU work.</span>
-            <div>
-              <button className="secondary-button" disabled={popoutState !== "active"} onClick={() => postToOutput({ type: "focus" })}>Focus popout</button>
-              <button className="primary-button" disabled={popoutState !== "active" || recordingState !== "idle"} onClick={closeOutputPopout} title={recordingState !== "idle" ? "Stop the current recording before closing the output" : "Close the popout and restore this canvas"}>Bring canvas back</button>
-            </div>
-          </div>
-        )}
-        {activeWorkspace === "export" && (
-          <ExportWorkspace
-            hasTake={recordedFrames.length > 0}
-            hasVideo={Boolean(lastVideo)}
-            durationMs={recordedDuration}
-            frameCount={recordedFrames.length}
-            width={settings.exportWidth}
-            height={settings.exportHeight}
-            fps={settings.exportFps}
-            trimStartMs={exportTrimStartMs}
-            trimEndMs={exportTrimEndMs || recordedDuration}
-            speed={exportPlaybackSpeed}
-            busy={captureFinalizing || videoExportProgress !== null || pngSequenceRendering}
-            progress={pngExportProgress ?? videoExportProgress}
-            onWidthChange={(value) => updateSetting("exportWidth", Math.min(7680, Math.max(64, Math.round(value / 2) * 2)))}
-            onHeightChange={(value) => updateSetting("exportHeight", Math.min(4320, Math.max(64, Math.round(value / 2) * 2)))}
-            onFpsChange={(value) => updateSetting("exportFps", Math.min(120, Math.max(1, Math.round(value))))}
-            onTrimStartChange={(value) => { setExportTrimStartMs(Math.min(exportTrimEndMs || recordedDuration, Math.max(0, value))); setRecordingElapsed(0); setPlaybackFrame(null); }}
-            onTrimEndChange={(value) => { setExportTrimEndMs(Math.min(recordedDuration, Math.max(exportTrimStartMs, value))); setRecordingElapsed(0); setPlaybackFrame(null); }}
-            onSpeedChange={(value) => { setExportPlaybackSpeed(Math.min(4, Math.max(0.1, value))); setRecordingElapsed(0); setPlaybackFrame(null); }}
-            onExportMp4={() => void exportVideo()}
-            onExportWebm={() => void exportWebm()}
-            onExportPng={() => void exportPngSequence()}
-            onReturn={() => activateWorkspace("capture")}
-          />
-        )}
-        {activeWorkspace !== "export" && permissionState !== "ready" && !devicePromptDismissed && (
-          <div className="permission-card"><Aperture size={28} /><div><strong>Connect capture devices (optional)</strong><span>Camera and microphone are only needed for live tracking and audio. Manual avatar tools remain available.</span>{deviceError && <small className="error-text">{deviceError}</small>}</div><div className="permission-actions"><button className="primary-button" onClick={requestDeviceAccess} disabled={permissionState === "asking"}>{permissionState === "asking" ? "Waiting…" : "Enable camera & microphone"}</button><button className="secondary-button" onClick={() => { setDevicePromptDismissed(true); pushToast({ type: "info", title: "Continuing without capture", message: "Avatar creation, manual expressions, backgrounds, lighting, and avatar-video export remain available." }); }}>Continue without capture</button></div></div>
-        )}
-      </section>
-
-      <aside className={`sidebar right-sidebar ${rightSidebarCollapsed ? "collapsed" : ""}`}>
-        <button type="button" className="sidebar-collapse-toggle" aria-label={rightSidebarCollapsed ? "Expand right sidebar" : "Collapse right sidebar"} title={rightSidebarCollapsed ? "Expand right sidebar" : "Collapse right sidebar"} onClick={() => setRightSidebarCollapsed((value) => !value)}><ChevronDown size={15} /></button>
-        <section className={`panel-section tracking-score tracker-${trackerStatus}`}><div className="score-ring" style={{ "--score": `${faceConfidence * 3.6}deg` } as React.CSSProperties}><strong>{faceConfidence}</strong><small>%</small></div><div><span>Tracking quality</span><strong>{trackingQualityLabel}</strong><small title={trackerFallbackReason || undefined}>{settings.trackingFps} FPS target · {trackerDelegate}</small><button className="inline-retry tracker-reload" disabled={cameraAccess !== "ready"} title={cameraAccess === "ready" ? "Reload the local MediaPipe model and face-tracking worker" : "Connect a camera before reloading the tracker"} onClick={() => reloadTracker()}><RefreshCw size={12} />{trackerStatus === "error" ? "Retry tracker" : trackerStatus === "loading" ? "Restart loading" : "Reload tracker"}</button></div></section>
-        <section className="panel-section"><div className="section-heading"><span>Layers</span><Layers3 size={15} /></div><label className={`toggle-row ${settings.showWebcam ? "is-active" : ""}`}><span><Video size={16} />Webcam<small>{settings.showWebcam ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showWebcam} onChange={(event) => updateSetting("showWebcam", event.target.checked)} /></label><label className={`toggle-row ${settings.showAvatar ? "is-active" : ""}`}><span><Box size={16} />{activeProfile.shortLabel} avatar<small>{settings.showAvatar ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showAvatar} onChange={(event) => updateSetting("showAvatar", event.target.checked)} /></label><label className={`toggle-row ${settings.showLandmarks ? "is-active" : ""}`}><span><Gauge size={16} />Landmarks<small>{settings.showLandmarks ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showLandmarks} onChange={(event) => updateSetting("showLandmarks", event.target.checked)} /></label><label className={`toggle-row ${settings.mirror ? "is-active" : ""}`}><span><Eye size={16} />Mirror camera + motion<small>{settings.mirror ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.mirror} onChange={(event) => updateSetting("mirror", event.target.checked)} /></label></section>
-        <section className="panel-section">
-          <div className="section-heading"><span>Avatar display</span></div>
-          <label className="slider-row"><span>Opacity</span><input type="range" min="0" max="100" value={settings.avatarOpacity * 100} onChange={(event) => updateSetting("avatarOpacity", Number(event.target.value) / 100)} /><output>{Math.round(settings.avatarOpacity * 100)}</output></label>
-          <label className="toggle-row"><span>Wireframe</span><input type="checkbox" checked={settings.wireframe} onChange={(event) => updateSetting("wireframe", event.target.checked)} /></label>
-          <label className="field-label background-field">Head background
-            <select
-              value={settings.backgroundMode}
-              onChange={(event) => {
-                const mode = event.target.value as typeof settings.backgroundMode;
-                updateSetting("backgroundMode", mode);
-                if (mode === "image" && !backgroundImageUrl) window.setTimeout(() => backgroundInputRef.current?.click(), 0);
-              }}
-            >
-              <option value="studio">Studio gradient</option>
-              <option value="solid">Solid colour</option>
-              <option value="image">Custom image</option>
-              <option value="transparent">Transparent</option>
-            </select>
-          </label>
-          {settings.backgroundMode === "solid" && <label className="color-field"><span>Background colour</span><input type="color" value={settings.backgroundColor} onChange={(event) => updateSetting("backgroundColor", event.target.value)} /><output>{settings.backgroundColor.toUpperCase()}</output></label>}
-          {settings.backgroundMode === "image" && (
-            <div className="background-image-controls">
-              <div className="background-image-actions">
-                <button className="secondary-button" onClick={() => backgroundInputRef.current?.click()}><ImagePlus size={15} />{backgroundImageUrl ? "Replace image" : "Choose image"}</button>
-                {backgroundImageUrl && <button className="icon-button" onClick={() => void clearBackgroundImage()} title="Remove custom background"><X size={14} /></button>}
-              </div>
-              <small title={backgroundImageName}>{backgroundImageName || "No image selected"}</small>
-              <label className="slider-row image-zoom"><span>Image zoom</span><input type="range" min="100" max="300" step="1" disabled={!backgroundImageUrl} value={settings.backgroundImageZoom * 100} onChange={(event) => updateSetting("backgroundImageZoom", Number(event.target.value) / 100)} /><output>{Math.round(settings.backgroundImageZoom * 100)}%</output></label>
-              <p className="helper-copy">Cover-fit preserves the original aspect ratio, including square images. Zoom changes framing without stretching.</p>
-            </div>
-          )}
-          <label className={`toggle-row ${settings.mouseLightEnabled ? "is-active" : ""}`}><span>Pointer light<small>{settings.mouseLightEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.mouseLightEnabled} onChange={(event) => updateSetting("mouseLightEnabled", event.target.checked)} /></label>
-          <label className="slider-row"><span>Light power</span><input type="range" min="0" max="200" disabled={!settings.mouseLightEnabled} value={settings.mouseLightIntensity * 100} onChange={(event) => updateSetting("mouseLightIntensity", Number(event.target.value) / 100)} /><output>{Math.round(settings.mouseLightIntensity * 100)}</output></label>
-        </section>
-        <section className="panel-section"><div className="section-heading"><span>Neutral calibration</span><small>{neutralFrame ? "Calibrated" : "Recommended"}</small></div><p className="helper-copy">Face forward with a relaxed expression. Calibration temporarily shows camera-only, then restores your previous layers. It zeros resting facial channels, head orientation, XYZ translation, and relative scale.</p><div className={`face-readiness ${calibrationReadiness.status}`}><i /><span>{calibrationReadiness.message}</span></div><button className="primary-button wide" onClick={() => void calibrate()} disabled={calibrating || recordingState !== "idle" || trackerStatus !== "ready" || !trackingFrame}><Sparkles size={16} />{calibrating ? "Verifying position…" : neutralFrame ? "Recalibrate" : "Calibrate neutral"}</button></section>
-        <section className="panel-section">
-          <div className="section-heading"><span>Tracking motion</span></div>
-          <FpsInput label="MediaPipe FPS" value={settings.trackingFps} onChange={(value) => updateSetting("trackingFps", value)} />
-          <label className={`toggle-row ${settings.trackingSmoothingEnabled ? "is-active" : ""}`}><span>Facial smoothing<small>{settings.trackingSmoothingEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.trackingSmoothingEnabled} onChange={(event) => updateSetting("trackingSmoothingEnabled", event.target.checked)} /></label>
-          <label className="slider-row smoothing-slider"><span>Face strength</span><input type="range" min="0" max="100" step="1" disabled={!settings.trackingSmoothingEnabled} value={settings.trackingSmoothing * 100} onChange={(event) => updateSetting("trackingSmoothing", Number(event.target.value) / 100)} /><output>{Math.round(settings.trackingSmoothing * 100)}%</output></label>
-          <label className={`toggle-row ${settings.motionSmoothingEnabled ? "is-active" : ""}`}><span>Head motion smoothing<small>{settings.motionSmoothingEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.motionSmoothingEnabled} onChange={(event) => updateSetting("motionSmoothingEnabled", event.target.checked)} /></label>
-          <label className="slider-row smoothing-slider"><span>Motion strength</span><input type="range" min="0" max="100" step="1" disabled={!settings.motionSmoothingEnabled} value={settings.motionSmoothing * 100} onChange={(event) => updateSetting("motionSmoothing", Number(event.target.value) / 100)} /><output>{Math.round(settings.motionSmoothing * 100)}%</output></label>
-          <label className="slider-row smoothing-slider"><span>Mouth dead zone</span><input type="range" min="0" max="100" step="1" value={settings.mouthDeadZone * 100} onChange={(event) => updateSetting("mouthDeadZone", Number(event.target.value) / 100)} /><output>{Math.round(settings.mouthDeadZone * 100)}%</output></label>
-          <p className="helper-copy smoothing-help">Face filtering is intentionally stronger; head motion uses a lighter independent filter. Small isolated one-frame twitches are rejected, while sustained and fast deliberate movement remains responsive. 0% is raw.</p>
-          <details className="advanced-expression head-pose-settings">
-            <summary><RotateCcw size={15} />Face-only head rotation</summary>
-            <label className={`toggle-row ${settings.headRotationEnabled ? "is-active" : ""}`}><span>Rotate from face<small>{settings.headRotationEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.headRotationEnabled} onChange={(event) => updateSetting("headRotationEnabled", event.target.checked)} /></label>
-            <label className="slider-row"><span>Yaw</span><input type="range" min="0" max="150" step="1" disabled={!settings.headRotationEnabled} value={settings.headYawStrength * 100} onChange={(event) => updateSetting("headYawStrength", Number(event.target.value) / 100)} /><output>{Math.round(settings.headYawStrength * 100)}%</output></label>
-            <label className="slider-row"><span>Pitch</span><input type="range" min="0" max="150" step="1" disabled={!settings.headRotationEnabled} value={settings.headPitchStrength * 100} onChange={(event) => updateSetting("headPitchStrength", Number(event.target.value) / 100)} /><output>{Math.round(settings.headPitchStrength * 100)}%</output></label>
-            <label className="slider-row"><span>Roll</span><input type="range" min="0" max="150" step="1" disabled={!settings.headRotationEnabled} value={settings.headRollStrength * 100} onChange={(event) => updateSetting("headRollStrength", Number(event.target.value) / 100)} /><output>{Math.round(settings.headRollStrength * 100)}%</output></label>
-            <label className="slider-row"><span>Dead zone</span><input type="range" min="0" max="10" step="0.25" disabled={!settings.headRotationEnabled} value={settings.headRotationDeadZone} onChange={(event) => updateSetting("headRotationDeadZone", Number(event.target.value))} /><output>{settings.headRotationDeadZone.toFixed(1)}°</output></label>
-            <label className="slider-row"><span>Pose smoothing</span><input type="range" min="0" max="100" step="1" disabled={!settings.headRotationEnabled} value={settings.headRotationSmoothing * 100} onChange={(event) => updateSetting("headRotationSmoothing", Number(event.target.value) / 100)} /><output>{Math.round(settings.headRotationSmoothing * 100)}%</output></label>
-            <p className="helper-copy">Uses MediaPipe's facial transform first and face landmarks as a fallback. It does not depend on shoulders or torso pose.</p>
-          </details>
-        </section>
-      </aside>
-
-      <footer className="transport-dock">
-        <AudioMeter devices={microphones} selectedId={settings.microphoneId} onSelect={(id) => updateSetting("microphoneId", id)} level={audioLevel} peak={audioPeak} muted={settings.muted} onToggleMute={() => updateSetting("muted", !settings.muted)} monitoring={monitoring} onToggleMonitoring={() => setMonitoring((value) => !value)} onRefresh={enumerateDevices} />
-        <section className="transport">
-          <div className="transport-main">
-            {recordingState === "idle" ? <button className="record-button" onClick={startRecording} disabled={calibrating || captureFinalizing || videoExportProgress !== null || popoutState === "starting"} title={calibrating ? "Finish or cancel neutral calibration before recording" : captureFinalizing ? "Wait for the previous take to finish finalizing" : videoExportProgress !== null ? "Wait for video export to finish" : popoutState === "starting" ? "Wait for the output popout to connect" : !trackingFrame && settings.recordingMode === "motion" ? "Motion mode needs a detected face" : "Start recording"}><span />{captureFinalizing ? "Finalizing…" : "Record"}</button> : <button className="stop-button" onClick={stopRecording}><CircleStop size={18} />Stop</button>}
-            <button className="icon-button transport-icon" onClick={togglePause} disabled={videoExportProgress !== null || (recordingState === "idle" && !recordedFrames.length)} title={playing ? "Pause playback" : recordingState === "recording" ? "Pause recording" : recordingState === "paused" ? "Resume recording" : "Play recorded take"}>{recordingState === "recording" || playing ? <Pause size={18} /> : <Play size={18} />}</button>
-            {(playbackFrame || playing) && <button className="secondary-button return-live" onClick={returnToLiveTracking} title="Stop playback and return the avatar to the active camera"><RefreshCw size={14} /><span>Return to Live</span></button>}
-            <div className="timecode"><strong>{formatTime(recordingElapsed)}</strong><span>{recordedFrames.length || recordingFramesRef.current.length} frames</span></div>
-          </div>
-          <div className={`timeline ${recordedFrames.length && recordingState === "idle" ? "seekable" : ""}`}>
-            <div className="timeline-track">
-              <div className="timeline-progress" style={{ width: `${timelinePercent}%` }} />
-              <span className="playhead" style={{ left: `${timelinePercent}%` }} />
-              <input
-                className="timeline-range"
-                type="range"
-                min="0"
-                max={timelineDuration}
-                step="1"
-                value={timelinePosition}
-                disabled={recordingState !== "idle" || videoExportProgress !== null || !recordedFrames.length}
-                aria-label="Recorded motion position"
-                aria-valuetext={`${formatTime(timelinePosition)} of ${formatTime(recordedDuration)}`}
-                onInput={(event) => seekPlayback(Number(event.currentTarget.value))}
-              />
-            </div>
-            <div className="timeline-labels"><span>00:00</span><span>{formatTime(recordedFrames.length ? playbackDuration : timelineDuration)}</span></div>
-          </div>
-          <div className="export-cluster" data-workspace-target="export"><FpsInput compact label="Export FPS" value={settings.exportFps} onChange={(value) => updateSetting("exportFps", value)} /><button className="secondary-button motion-import" onClick={() => motionInputRef.current?.click()} disabled={recordingState !== "idle" || calibrating || videoExportProgress !== null} title="Import a GNM Studio motion JSON file"><Upload size={15} /><span>Import JSON</span></button>{recordedFrames.length > 0 && <button className="secondary-button" onClick={useCurrentAppearanceForTake} disabled={recordingState !== "idle" || captureFinalizing || videoExportProgress !== null} title="Replace the take's immutable appearance snapshot with the current avatar, materials, layers, lighting, and view"><WandSparkles size={15} /><span>Use current look</span></button>}<button className="secondary-button" onClick={exportMotion} disabled={!recordedFrames.length || videoExportProgress !== null} title="Export motion JSON"><Download size={16} /><span>JSON</span></button><button className="secondary-button" onClick={exportGlb} disabled={!recordedFrames.length || videoExportProgress !== null} title="Export animated GLB for Blender"><Download size={16} /><span>GLB</span></button>{lastVideo && !lastVideo.type.includes("mp4") && <button className="secondary-button source-export" onClick={exportWebmSource} disabled={videoExportProgress !== null || captureFinalizing} title="Export optional unconverted WebM source"><Download size={14} /><span>WebM source</span></button>}<button className="primary-button" onClick={exportVideo} disabled={(!lastVideo && !recordedFrames.length) || captureFinalizing || videoExportProgress !== null || recordingState !== "idle"} title={captureFinalizing ? "Wait for the recorded media and microphone tracks to finish finalizing" : lastVideo ? "Export the directly recorded take as H.264/AAC MP4 without re-rendering" : recordedFrames.length ? "Render the recorded motion, framing, view, and retained audio as MP4" : "Record a motion or video take before exporting MP4"}><Download size={16} /><span>{captureFinalizing ? "Finalizing…" : videoExportProgress !== null ? videoExportBackend === "ffmpeg" ? "FFmpeg rendering…" : `Rendering ${Math.round(videoExportProgress * 100)}%` : "MP4"}</span></button></div>
-        </section>
-      </footer>
+      <LeftSidebar
+        collapsed={leftSidebarCollapsed}
+        activePanel={activePanel}
+        toggleCollapsed={() => setLeftSidebarCollapsed((value) => !value)}
+        showAvatar={() => { setActivePanel("avatar"); setActiveWorkspace("create"); }}
+        showCapture={() => { setActivePanel("capture"); setActiveWorkspace("capture"); }}
+        avatarContent={<>
+          <AvatarModelPanel avatarKind={settings.avatarKind} gnmInfo={gnmInfo} select={(avatarKind) => { updateSetting("avatarKind", avatarKind); pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: avatarKind === "facecap" ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." }); }} />
+          {activeProfile.supportsIdentity && <IdentityPanel seed={identitySeed} presentation={identityGender} population={identityEthnicity} presentationStrength={identityPresentationStrength} populationWeights={identityPopulationWeights} status={identityStatus} recordingIdle={recordingState === "idle"} web={isWebEdition} webBackend={webIdentityBackend} setSeed={setIdentitySeed} setPresentation={chooseIdentityPresentation} setPopulation={chooseIdentityPopulation} setPresentationStrength={(value) => { setIdentityPresentationStrength(value); setIdentityGender(Math.abs(value) < 0.01 ? "blend" : value < 0 ? "female" : "male"); }} setPopulationWeight={updateIdentityPopulationWeight} randomize={randomizeIdentity} comparePresentation={compareIdentityPresentation} generate={() => void generateIdentity()} />}
+          <PresetPanel presets={fullStatePresets} selectedId={selectedPresetId} name={presetName} recordingIdle={recordingState === "idle"} inputRef={presetInputRef} select={(id) => { setSelectedPresetId(id); const preset = fullStatePresets.find((entry) => entry.id === id); if (preset) setPresetName(preset.name); }} setName={setPresetName} save={saveNewFullStatePreset} load={loadSelectedFullStatePreset} update={updateSelectedFullStatePreset} rename={renameSelectedFullStatePreset} remove={deleteSelectedFullStatePreset} exportBundle={() => void exportPresetBundle()} />
+          <AvatarAppearancePanels settings={settings} updateSetting={updateSetting} />
+          <ExpressionPanel avatarKind={settings.avatarKind} avatarLabel={activeProfile.shortLabel} expressionCount={activeProfile.expressionCount} manual={manualExpressions} frozen={frozenExpressions} disabled={recordingState !== "idle" || captureFinalizing} setManual={(name, value) => setManualExpressions((current) => ({ ...current, [name]: value }))} toggleFreeze={toggleExpressionFreeze} resetExpressions={resetActiveExpressions} resetJoints={() => { const names = new Set<string>(manualJointGroups.flatMap((group) => group.controls.map(([name]) => name))); setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); }} gnm={{ semanticA: gnmExpressionA, semanticB: gnmExpressionB, seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend, weights: gnmExpressionWeights, frozen: gnmFrozenExpressionComponents, ready: expressionDecoderReady, busy: gnmExpressionStatus === "evaluating", backend: isDesktopRuntime ? "Native Rust" : webIdentityBackend === "webgpu" ? "WebGPU worker" : "CPU worker", setSemanticA: (value) => { setGnmExpressionA(value); setGnmExpressionAbActive(true); }, setSemanticB: (value) => { setGnmExpressionB(value); setGnmExpressionAbActive(true); }, setSeedA: (value) => { setGnmExpressionSeedA(value); setGnmExpressionAbActive(true); }, setSeedB: (value) => { setGnmExpressionSeedB(value); setGnmExpressionAbActive(true); }, resampleA: () => resampleExpressionSeed("a"), resampleB: () => resampleExpressionSeed("b"), setBlend: (value) => { setGnmExpressionBlend(value); setGnmExpressionAbActive(true); }, setWeight: setRawGnmExpressionWeight, toggleFreeze: toggleRawGnmExpressionFreeze, mirror: mirrorRawGnmExpression, reset: resetRawGnmExpression }} />
+        </>}
+        captureContent={<CaptureSidebarContent web={isWebEdition} settings={settings} cameras={cameras} cameraReady={cameraAccess === "ready"} permissionAsking={permissionState === "asking"} ffmpegStatus={ffmpegStatus} ffmpegVersion={ffmpegVersion} updateSetting={updateSetting} enumerateDevices={() => void enumerateDevices()} requestAccess={() => void requestDeviceAccess()} checkFfmpeg={() => void checkFfmpeg()} chooseFfmpeg={() => void chooseFfmpegExecutable()} openFfmpegDownload={() => void openExternal("https://ffmpeg.org/download.html")} />}
+      />
+      <StudioViewport
+        workspace={activeWorkspace}
+        settings={settings}
+        updateSetting={updateSetting}
+        calibrating={calibrating}
+        exportBusy={videoExportProgress !== null}
+        pngBusy={pngSequenceRendering}
+        fullscreen={fullscreen}
+        popout={{ state: popoutState, recordingIdle: recordingState === "idle", open: () => void openOutputPopout(), close: closeOutputPopout, focus: () => postToOutput({ type: "focus" }) }}
+        captureStill={() => void captureStill()}
+        resetView={() => setResetViewSignal((value) => value + 1)}
+        toggleFullscreen={() => void toggleFullscreen()}
+        stageProps={{
+          avatarKind: stageSettings.avatarKind,
+          videoRef,
+          frame: displayedFrame,
+          neutralFrame: stageNeutralFrame,
+          showWebcam: calibrating || stageSettings.showWebcam,
+          showAvatar: !calibrating && (motionVideoRendering || pngSequenceRendering || stageSettings.showAvatar),
+          showLandmarks: !calibrating && stageSettings.showLandmarks,
+          mirror: stageSettings.mirror,
+          opacity: stageSettings.avatarOpacity,
+          wireframe: stageSettings.wireframe,
+          skinTextureEnabled: stageSettings.skinTextureEnabled,
+          skinTone: stageSettings.skinTone,
+          skinTextureScale: stageSettings.skinTextureScale,
+          skinTextureRotation: stageSettings.skinTextureRotation,
+          skinTextureFeather: stageSettings.skinTextureFeather,
+          eyeShaderEnabled: stageSettings.eyeShaderEnabled,
+          eyeColor: stageSettings.eyeColor,
+          backgroundMode: stageSettings.backgroundMode,
+          backgroundColor: stageSettings.backgroundColor,
+          backgroundImageUrl: stageBackgroundImageUrl,
+          backgroundImageZoom: stageSettings.backgroundImageZoom,
+          mouseLightEnabled: stageSettings.mouseLightEnabled,
+          mouseLightIntensity: stageSettings.mouseLightIntensity,
+          headPoseSettings: { enabled: stageSettings.headRotationEnabled, yawStrength: stageSettings.headYawStrength, pitchStrength: stageSettings.headPitchStrength, rollStrength: stageSettings.headRollStrength, deadZone: stageSettings.headRotationDeadZone, smoothing: stageSettings.headRotationSmoothing },
+          calibrating,
+          calibrationComplete,
+          faceAlignment: calibrationFaceAlignment,
+          countdown,
+          trackingReady: Boolean(trackingFrame),
+          identityVertices: stageIdentityVertices,
+          manualExpressions: stageManualExpressions,
+          frozenExpressions: stageFrozenExpressions,
+          recordingMode: motionVideoRendering || pngSequenceRendering ? "avatar" : stageSettings.recordingMode,
+          recordingActive: motionVideoRendering || pngSequenceRendering || recordingState !== "idle",
+          resetViewSignal,
+          viewStateOverride: forcedViewState,
+          onCancelCalibration: cancelCalibration,
+          onCompositeCanvas: handleCompositeCanvas,
+          onStageError: handleStageError,
+          onViewportResize: handleViewportResize,
+          onViewStateChange: handleViewStateChange,
+          onAvatarMotion: storeAvatarMotion,
+        }}
+        exportProps={{
+          hasTake: recordedFrames.length > 0,
+          hasVideo: Boolean(lastVideo),
+          durationMs: recordedDuration,
+          frameCount: recordedFrames.length,
+          width: settings.exportWidth,
+          height: settings.exportHeight,
+          fps: settings.exportFps,
+          trimStartMs: exportTrimStartMs,
+          trimEndMs: exportTrimEndMs || recordedDuration,
+          speed: exportPlaybackSpeed,
+          busy: captureFinalizing || videoExportProgress !== null || pngSequenceRendering,
+          progress: pngExportProgress ?? videoExportProgress,
+          onWidthChange: (value) => updateSetting("exportWidth", Math.min(7680, Math.max(64, Math.round(value / 2) * 2))),
+          onHeightChange: (value) => updateSetting("exportHeight", Math.min(4320, Math.max(64, Math.round(value / 2) * 2))),
+          onFpsChange: (value) => updateSetting("exportFps", Math.min(120, Math.max(1, Math.round(value)))),
+          onTrimStartChange: (value) => { setExportTrimStartMs(Math.min(exportTrimEndMs || recordedDuration, Math.max(0, value))); setRecordingElapsed(0); setPlaybackFrame(null); },
+          onTrimEndChange: (value) => { setExportTrimEndMs(Math.min(recordedDuration, Math.max(exportTrimStartMs, value))); setRecordingElapsed(0); setPlaybackFrame(null); },
+          onSpeedChange: (value) => { setExportPlaybackSpeed(Math.min(4, Math.max(0.1, value))); setRecordingElapsed(0); setPlaybackFrame(null); },
+          onExportMp4: () => void exportVideo(),
+          onExportWebm: () => void exportWebm(),
+          onExportPng: () => void exportPngSequence(),
+          onReturn: () => activateWorkspace("capture"),
+        }}
+        accessPrompt={activeWorkspace !== "export" && permissionState !== "ready" && !devicePromptDismissed ? <DeviceAccessPrompt permissionState={permissionState} error={deviceError} requestAccess={() => void requestDeviceAccess()} continueWithoutCapture={() => { setDevicePromptDismissed(true); pushToast({ type: "info", title: "Continuing without capture", message: "Avatar creation, manual expressions, backgrounds, lighting, and avatar-video export remain available." }); }} /> : undefined}
+      />
+      <RightSidebar
+        collapsed={rightSidebarCollapsed}
+        toggleCollapsed={() => setRightSidebarCollapsed((value) => !value)}
+        tracking={{ status: trackerStatus, score: faceConfidence, label: trackingQualityLabel, fallbackReason: trackerFallbackReason, delegate: trackerDelegate, cameraReady: cameraAccess === "ready", reload: () => reloadTracker() }}
+        settings={settings}
+        updateSetting={updateSetting}
+        avatarLabel={activeProfile.shortLabel}
+        calibrating={calibrating}
+        calibration={{ neutralFrame, readiness: calibrationReadiness, recordingIdle: recordingState === "idle", trackerReady: trackerStatus === "ready", hasFrame: Boolean(trackingFrame), start: () => void calibrate() }}
+        background={{ url: backgroundImageUrl, name: backgroundImageName, inputRef: backgroundInputRef, clear: () => void clearBackgroundImage() }}
+      />
+      <TransportDock
+        audio={{ devices: microphones, selectedId: settings.microphoneId, level: audioLevel, peak: audioPeak, muted: settings.muted, monitoring, select: (id) => updateSetting("microphoneId", id), toggleMute: () => updateSetting("muted", !settings.muted), toggleMonitoring: () => setMonitoring((value) => !value), refresh: () => void enumerateDevices() }}
+        recording={{ state: recordingState, elapsed: recordingElapsed, frameCount: recordedFrames.length, draftFrameCount: recordingFramesRef.current.length, playing, playbackActive: Boolean(playbackFrame || playing), calibrating, finalizing: captureFinalizing, videoBusy: videoExportProgress !== null, popoutStarting: popoutState === "starting", motionNeedsFace: !trackingFrame && settings.recordingMode === "motion", start: () => void startRecording(), stop: stopRecording, togglePause, returnLive: returnToLiveTracking }}
+        timeline={{ percent: timelinePercent, duration: timelineDuration, position: timelinePosition, recordedDuration, playbackDuration, seek: seekPlayback }}
+        exports={{ fps: settings.exportFps, motionInputRef, hasTake: recordedFrames.length > 0, hasVideo: Boolean(lastVideo), sourceIsWebm: Boolean(lastVideo && !lastVideo.type.includes("mp4")), videoProgress: videoExportProgress, backend: videoExportBackend, setFps: (value) => updateSetting("exportFps", value), useCurrentLook: useCurrentAppearanceForTake, exportMotion: () => void exportMotion(), exportGlb: () => void exportGlb(), exportWebmSource: () => void exportWebmSource(), exportVideo: () => void exportVideo() }}
+      />
       <ToastCenter
         toasts={toasts}
         onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))}
       />
-      <input
-        ref={motionInputRef}
-        className="visually-hidden-input"
-        type="file"
-        accept="application/json,.json"
-        onChange={(event) => {
-          void importMotionJson(event.target.files?.[0]);
-          event.currentTarget.value = "";
-        }}
-      />
-      <input
-        ref={backgroundInputRef}
-        className="visually-hidden-input"
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/avif,image/bmp,image/gif"
-        onChange={(event) => {
-          void chooseBackgroundImage(event.target.files?.[0]);
-          event.currentTarget.value = "";
-        }}
-      />
-      <input
-        ref={presetInputRef}
-        className="visually-hidden-input"
-        type="file"
-        accept="application/json,.json"
-        onChange={(event) => {
-          void importPresetBundle(event.target.files?.[0]);
-          event.currentTarget.value = "";
-        }}
-      />
+      <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void importPresetBundle(file)} />
     </main>
-    {backendMenu && createPortal(
-      <div className="backend-menu-portal">
-        <button className="backend-menu-scrim" aria-label="Close tracking backend menu" onClick={() => setBackendMenu(null)} />
-        <div className="backend-menu" role="menu" aria-label="Tracking backend" style={{ left: backendMenu.x, top: backendMenu.y }}>
-          <header><span>Tracking backend</span><small>Right-click selector</small></header>
-          <button role="menuitemradio" aria-checked={settings.trackingBackend === "auto"} onClick={() => selectTrackingBackend("auto")}>
-            <RefreshCw size={15} /><span><strong>Auto</strong><small>GPU first, CPU fallback</small></span>{settings.trackingBackend === "auto" && <Check size={14} />}
-          </button>
-          <button role="menuitemradio" aria-checked={settings.trackingBackend === "gpu"} disabled={gpuProbe.available === false} title={gpuProbe.reason} onClick={() => selectTrackingBackend("gpu")}>
-            <Zap size={15} /><span><strong>GPU</strong><small>{gpuProbe.available === true ? "Available" : gpuProbe.available === false ? "Unavailable" : "Not tested yet"}</small></span>{settings.trackingBackend === "gpu" && <Check size={14} />}
-          </button>
-          <button role="menuitemradio" aria-checked={settings.trackingBackend === "cpu"} disabled={cpuProbe.available === false} title={cpuProbe.reason} onClick={() => selectTrackingBackend("cpu")}>
-            <Cpu size={15} /><span><strong>CPU</strong><small>{cpuProbe.available === true ? "Available" : cpuProbe.available === false ? "Unavailable" : "Not tested yet"}</small></span>{settings.trackingBackend === "cpu" && <Check size={14} />}
-          </button>
-        </div>
-      </div>,
-      document.body,
-    )}
-    {settingsOpen && createPortal(
-      <div className="settings-portal">
-        <button className="settings-scrim" aria-label="Close settings" onClick={() => setSettingsOpen(false)} />
-        <aside className="settings-popover" role="dialog" aria-modal="true" aria-label="Appearance settings">
-          <header className="settings-head">
-            <div><Settings2 size={17} /><span><strong>Settings</strong><small>Appearance and interface</small></span></div>
-            <button className="popover-close" onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={16} /></button>
-          </header>
-          <section className="settings-group">
-            <div className="settings-label"><span>Theme</span><small>Choose the application surface</small></div>
-            <div className="settings-segmented">
-              <button className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}><Moon size={14} />Dark</button>
-              <button className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}><Sun size={14} />Light</button>
-            </div>
-          </section>
-          <section className="settings-group">
-            <div className="settings-label"><span>Accent colour</span><small>Applied to active controls and meters</small></div>
-            <div className="accent-picker">
-              {accentOptions.map((option) => (
-                <button
-                  key={option}
-                  className={`accent-dot accent-${option} ${accent === option ? "active" : ""}`}
-                  onClick={() => setAccent(option)}
-                  title={option}
-                  aria-label={`${option} accent`}
-                  aria-pressed={accent === option}
-                />
-              ))}
-            </div>
-          </section>
-          <section className="settings-group">
-            <div className="settings-label"><span>Interface scale</span><small>The settings window remains stationary while the studio scales</small></div>
-            <div className="settings-scale">
-              <input type="range" min="80" max="125" step="1" value={uiScale} onChange={(event) => setUiScale(Number(event.target.value))} />
-              <output>{uiScale}%</output>
-            </div>
-            <button className="settings-reset" onClick={() => setUiScale(100)} disabled={uiScale === 100}><RotateCcw size={13} />Reset to 100%</button>
-          </section>
-          <section className="settings-group">
-            <div className="settings-label"><span>Fullscreen output</span><small>Clean controls for capture and OBS</small></div>
-            <label className={`toggle-row ${settings.outputAutoHideEnabled ? "is-active" : ""}`}><span>Auto-hide controls<small>{settings.outputAutoHideEnabled ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.outputAutoHideEnabled} onChange={(event) => updateSetting("outputAutoHideEnabled", event.target.checked)} /></label>
-            <label className="slider-row"><span>Hide delay</span><input type="range" min="0.5" max="10" step="0.5" disabled={!settings.outputAutoHideEnabled || settings.outputAlwaysHideControls} value={settings.outputAutoHideDelay} onChange={(event) => updateSetting("outputAutoHideDelay", Number(event.target.value))} /><output>{settings.outputAutoHideDelay.toFixed(1)}s</output></label>
-            <label className={`toggle-row ${settings.outputAlwaysHideControls ? "is-active" : ""}`}><span>Always clean<small>{settings.outputAlwaysHideControls ? "ON" : "OFF"}</small></span><input type="checkbox" checked={settings.outputAlwaysHideControls} onChange={(event) => updateSetting("outputAlwaysHideControls", event.target.checked)} /></label>
-            <p className="helper-copy">Move the pointer to reveal controls, press H to toggle them, and press Esc to exit fullscreen.</p>
-          </section>
-          <footer className="settings-about">
-            <span className="settings-about-icon"><span className="brand-head-icon" style={brandHeadIconStyle} /></span>
-            <span className="settings-about-copy"><strong>GNM Studio {isWebEdition ? "Web" : "Desktop"}</strong><small>Apache-2.0 · {isWebEdition ? "GitHub Pages build" : "Manifest build"}</small></span>
-            <span className="settings-about-links">
-              <button onClick={() => void openExternal(repositoryUrl)} title="Open GNM Studio on GitHub"><GithubMark />GitHub</button>
-              <button onClick={() => void openExternal(releasesUrl)} title="Open GNM Studio releases">v{appVersion}</button>
-            </span>
-          </footer>
-        </aside>
-      </div>,
-      document.body,
-    )}
+    {backendMenu && createPortal(<BackendMenu position={backendMenu} backend={settings.trackingBackend} gpuProbe={gpuProbe} cpuProbe={cpuProbe} close={() => setBackendMenu(null)} select={selectTrackingBackend} />, document.body)}
+    {settingsOpen && createPortal(<SettingsPopover web={isWebEdition} theme={theme} accent={accent} uiScale={uiScale} settings={settings} appVersion={appVersion} close={() => setSettingsOpen(false)} setTheme={setTheme} setAccent={setAccent} setUiScale={setUiScale} updateSetting={updateSetting} openExternal={(url) => void openExternal(url)} />, document.body)}
     </>
   );
 }

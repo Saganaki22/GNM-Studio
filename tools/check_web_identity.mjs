@@ -42,7 +42,9 @@ const blended = weightedIdentityDecoderInput("same", 0.25, [1, 1, 2, 0]);
 assert.deepEqual(Array.from(feminine.slice(64)), [1, 0, 1, 0, 0, 0]);
 assert.deepEqual(Array.from(masculine.slice(64)), [0, 1, 0, 0, 0, 1]);
 assert.deepEqual(Array.from(blended.slice(64)), [0.375, 0.625, 0.25, 0.25, 0.5, 0]);
-const appSource = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
+const appSource = ["../src/App.tsx", "../src/features/identity/IdentityPanel.tsx"]
+  .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
+  .join("\n");
 for (const marker of ["identityPresentationStrength", "identityPopulationWeights", "weightedIdentityDecoderInput", "Compare feminine / masculine with this seed"]) {
   assert.ok(appSource.includes(marker), `Weighted identity UI/evaluation is missing ${marker}`);
 }

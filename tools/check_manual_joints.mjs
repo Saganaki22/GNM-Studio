@@ -4,10 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const app = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
 const config = readFileSync(fileURLToPath(new URL("../src/app/studioConfig.ts", import.meta.url)), "utf8");
+const expressionPanel = readFileSync(fileURLToPath(new URL("../src/features/expression/ExpressionPanel.tsx", import.meta.url)), "utf8");
 for (const name of ["joint_neck_pitch", "joint_head_yaw", "joint_left_eye_pitch", "joint_right_eye_yaw", "joint_translate_x", "joint_translate_y", "joint_translate_z"]) {
-  assert.ok(`${app}\n${config}`.includes(name), `Manual joint UI is missing ${name}`);
+  assert.ok(`${app}\n${config}\n${expressionPanel}`.includes(name), `Manual joint UI is missing ${name}`);
 }
-assert.ok(app.includes("Freeze any channel"));
+assert.ok(expressionPanel.includes("Freeze any channel"));
 const stage = readFileSync(fileURLToPath(new URL("../src/components/Stage.tsx", import.meta.url)), "utf8");
 for (const marker of ["neckOffset", "headOffset", "root.quaternion.multiply", 'jointValue("joint_translate_x")', 'jointValue("joint_left_eye_yaw")']) {
   assert.ok(stage.includes(marker), `Stage joint offsets are missing ${marker}`);

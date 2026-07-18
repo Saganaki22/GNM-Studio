@@ -14,11 +14,13 @@ assert.equal(phaseFromHeartbeat("popout-recording", "encoding"), "popout-encodin
 assert.equal(phaseFromHeartbeat("closing", "ready"), "closing");
 assert.equal(phaseFromHeartbeat("restoring", "recording"), "restoring");
 
-const app = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
+const app = ["../src/App.tsx", "../src/features/stage/StudioViewport.tsx"]
+  .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
+  .join("\n");
 for (const marker of [
   'type: "shutdown"', 'message.type === "shutdown-ready"', 'type: "capture-png"',
   "waitForOutputRecordingResult", "retainedAudio: editedAudio", "setOutputOwnerPhase(\"restoring\")",
-  'popoutState === "idle" ? (',
+  'popout.state === "idle" ?',
 ]) assert.ok(app.includes(marker), `Output-owner pipeline is missing ${marker}`);
 
 const output = readFileSync(fileURLToPath(new URL("../src/components/OutputWindow.tsx", import.meta.url)), "utf8");

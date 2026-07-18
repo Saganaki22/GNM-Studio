@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const app = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
+const app = ["../src/App.tsx", "../src/features/shell/StudioTopBar.tsx"]
+  .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
+  .join("\n");
 for (const marker of [
   'aria-keyshortcuts="P"', 'event.key.toLowerCase() !== "p"', "capturePausedRef.current = paused",
   "track.enabled = !paused", "setAudioLevel(0)", "setAudioPeak(0)",

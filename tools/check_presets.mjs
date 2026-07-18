@@ -23,7 +23,9 @@ assert.ok(encoded.includes('"gnmExpressionWeights": ['));
 assert.ok(!encoded.includes('"0": 0'), "typed arrays must serialize as JSON arrays");
 assert.throws(() => parseFullStatePresetBundle({ format: "gnm-studio-preset-bundle", version: 99, presets: [] }), /Unsupported/);
 
-const app = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
+const app = ["../src/App.tsx", "../src/features/presets/PresetPanel.tsx"]
+  .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
+  .join("\n");
 for (const marker of ["Save new", "loadSelectedFullStatePreset", "updateSelectedFullStatePreset", "renameSelectedFullStatePreset", "deleteSelectedFullStatePreset", "importPresetBundle", "exportPresetBundle"]) {
   assert.ok(app.includes(marker), `Preset UI is missing ${marker}`);
 }
