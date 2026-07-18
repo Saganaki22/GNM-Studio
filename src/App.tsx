@@ -1,78 +1,44 @@
 import { useCallback, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { AvatarAppearancePanels } from "./features/avatar/AvatarAppearancePanels";
-import { AvatarModelPanel } from "./features/avatar/AvatarModelPanel";
+import { StudioShell } from "./app/StudioShell";
 import { useBackgroundImage } from "./features/background/useBackgroundImage";
-import { CaptureSidebarContent } from "./features/devices/CaptureSidebarContent";
-import { SettingsPopover } from "./features/settings/SettingsPopover";
 import { useStudioSettings } from "./features/settings/useStudioSettings";
-import { RightSidebar } from "./features/stage/RightSidebar";
-import { StudioViewport } from "./features/stage/StudioViewport";
 import { useStagePresentation } from "./features/stage/useStagePresentation";
 import { useStageOutputSync } from "./features/stage/useStageOutputSync";
-import { DeviceAccessPrompt } from "./features/devices/DeviceAccessPrompt";
-import { ExpressionPanel } from "./features/expression/ExpressionPanel";
 import { useFullscreenControls } from "./features/fullscreen/useFullscreenControls";
 import { useGnmRuntime } from "./features/gnm/useGnmRuntime";
-import { IdentityPanel } from "./features/identity/IdentityPanel";
-import { PresetPanel } from "./features/presets/PresetPanel";
-import { usePresets } from "./features/presets/usePresets";
-import { useOutputPopout } from "./features/output/useOutputPopout";
-import { TransportDock } from "./features/recording/TransportDock";
-import { useRecordingSession } from "./features/recording/useRecordingSession";
-import { useRecordedAppearance } from "./features/recording/useRecordedAppearance";
+import { useTakePipeline } from "./features/recording/useTakePipeline";
 import { useFfmpegEncoder } from "./features/export/useFfmpegEncoder";
 import { useSaveFeedback } from "./features/export/useSaveFeedback";
-import { useStudioExport } from "./features/export/useStudioExport";
-import { LeftSidebar } from "./features/shell/LeftSidebar";
-import { StudioFileInputs } from "./features/shell/StudioFileInputs";
-import { StudioTopBar } from "./features/shell/StudioTopBar";
 import { useStudioMetadata } from "./features/shell/useStudioMetadata";
 import { useStudioDerivedState } from "./features/shell/useStudioDerivedState";
 import { useStudioControls } from "./features/shell/useStudioControls";
-import { BackendMenu } from "./features/tracking/BackendMenu";
 import { useCaptureTrackingPipeline } from "./features/tracking/useCaptureTrackingPipeline";
 import { useToasts } from "./features/toasts/useToasts";
-import { ToastCenter } from "./components/ToastCenter";
-import { avatarProfiles } from "./lib/avatarProfiles";
-import type { MainToOutputCommand } from "./lib/outputChannel";
 import { recordingAppearanceSettingKeys } from "./lib/recordingAppearance";
 import type {
   AppSettings,
   RecordedFrame, RecordedTakeSnapshot, TrackingBackend,
 } from "./types";
-import { isDesktopRuntime, isWebEdition, manualJointGroups, type Workspace } from "./app/studioConfig";
+import { isWebEdition, type Workspace } from "./app/studioConfig";
 import "./App.css";
-
-type OutputStartCommand = Omit<Extract<MainToOutputCommand, { type: "record"; action: "start" }>, "type" | "action">;
-type OutputRecordingBridge = {
-  isActive(): boolean;
-  begin(command: OutputStartCommand): Promise<void>;
-  pause(paused: boolean): void;
-  stop(): void;
-};
 
 function App() {
   const [manualExpressions, setManualExpressions] = useState<Record<string, number>>({});
   const [frozenExpressions, setFrozenExpressions] = useState<Record<string, number>>({});
-  const {
-    settings, setSettings, settingsOpen, setSettingsOpen, theme, setTheme, accent, setAccent,
-    uiScale, setUiScale, leftSidebarCollapsed, setLeftSidebarCollapsed,
-    rightSidebarCollapsed, setRightSidebarCollapsed,
-  } = useStudioSettings();
+  const settingsController = useStudioSettings();
+  const { settings, setSettings } = settingsController;
   const [deviceError, setDeviceError] = useState("");
   const stage = useStagePresentation(setDeviceError);
   const {
-    size: stageSize, forcedViewState, resetViewSignal, setForcedViewState,
-    resetView, handleCanvas: handleCompositeCanvas, handleResize: handleViewportResize,
-    handleViewState: handleViewStateChange, handleError: handleStageError,
+    size: stageSize, setForcedViewState, handleViewState: handleViewStateChange,
     getCanvas: getStageCanvas, getCurrentViewState,
   } = stage;
   const [activePanel, setActivePanel] = useState<"avatar" | "capture">(isWebEdition ? "capture" : "avatar");
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>(isWebEdition ? "capture" : "create");
-  const { fullscreen, controlsHidden: outputControlsHidden, scheduleControls: scheduleOutputControls, toggle: toggleFullscreen } = useFullscreenControls(settings, setDeviceError);
-  const { toasts, pushToast, dismissToast } = useToasts();
-  const { gnmInfo, appVersion } = useStudioMetadata({ deviceError, onToast: pushToast, onError: setDeviceError });
+  const fullscreenController = useFullscreenControls(settings, setDeviceError);
+  const notifications = useToasts();
+  const { pushToast } = notifications;
+  const metadata = useStudioMetadata({ deviceError, onToast: pushToast, onError: setDeviceError });
   const recordingStateGetterAdapterRef = useRef<() => "idle" | "recording" | "paused">(() => "idle");
   const isRecordingIdle = useCallback(() => recordingStateGetterAdapterRef.current() === "idle", []);
   const recordingFinalizingGetterAdapterRef = useRef<() => boolean>(() => false);
@@ -104,50 +70,33 @@ function App() {
     onToast: pushToast,
     onError: setDeviceError,
   });
-  const { videoRef, capture: captureDevices, playback, tracker, calibration } = captureTracking;
+  const { capture: captureDevices, playback, tracker, calibration } = captureTracking;
   const {
-    cameras, microphones, permissionState, cameraAccess, microphoneAccess, devicePromptDismissed,
-    paused: capturePaused, monitoring, audioLevel, audioPeak,
+    cameraAccess, microphoneAccess, paused: capturePaused,
   } = captureDevices;
-  const { playing, frame: playbackFrame, elapsed: recordingElapsed } = playback;
-  const {
-    frame: trackingFrame, status: trackerStatus, delegate: trackerDelegate,
-    fallbackReason: trackerFallbackReason, gpuProbe, cpuProbe, backendMenu,
-  } = tracker;
+  const { frame: playbackFrame, elapsed: recordingElapsed } = playback;
+  const { frame: trackingFrame, status: trackerStatus } = tracker;
   const getCurrentTrackingFrame = tracker.getCurrentFrame;
-  const {
-    neutralFrame, calibrating, complete: calibrationComplete, countdown,
-    faceAlignment: calibrationFaceAlignment, readiness: calibrationReadiness,
-  } = calibration;
-  const { identity, expression, restoreState: restoreGnmState } = useGnmRuntime({
+  const { neutralFrame, calibrating } = calibration;
+  const gnm = useGnmRuntime({
     avatarKind: settings.avatarKind,
     isRecordingIdle,
     onToast: pushToast,
     onError: setDeviceError,
   });
+  const { identity, expression, restoreState: restoreGnmState } = gnm;
   const {
     seed: identitySeed, presentation: identityGender, population: identityEthnicity,
     presentationStrength: identityPresentationStrength, populationWeights: identityPopulationWeights,
-    vertices: identityVertices, weights: identityWeights, status: identityStatus,
-    webBackend: webIdentityBackend,
+    vertices: identityVertices, weights: identityWeights,
   } = identity;
   const {
-    ready: expressionDecoderReady, status: gnmExpressionStatus, weights: gnmExpressionWeights,
-    frozen: gnmFrozenExpressionComponents, semanticA: gnmExpressionA, semanticB: gnmExpressionB,
-    seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend,
+    weights: gnmExpressionWeights, frozen: gnmFrozenExpressionComponents,
   } = expression;
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const motionInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
   const exportBusyAdapterRef = useRef<() => boolean>(() => false);
-  const outputRecordingAdapterRef = useRef<OutputRecordingBridge>({
-    isActive: () => false,
-    begin: (_command) => Promise.reject<void>(new Error("The output controller is not ready.")),
-    pause: (_paused) => {},
-    stop: () => {},
-  });
-
-
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     if ((recordingStateGetterAdapterRef.current() !== "idle" || recordingFinalizingGetterAdapterRef.current() || exportBusyAdapterRef.current()) && recordingAppearanceSettingKeys.has(key)) {
       pushToast({
@@ -167,10 +116,9 @@ function App() {
     onToast: pushToast,
     onError: setDeviceError,
   });
-  const { showSaveResult, openExternal } = saveFeedback;
-  const { status: ffmpegStatus, version: ffmpegVersion } = ffmpeg;
+  const { showSaveResult } = saveFeedback;
 
-  const { backgroundImageUrl, backgroundImageName, chooseBackgroundImage, clearBackgroundImage, adoptBackgroundImageUrl } = useBackgroundImage({
+  const background = useBackgroundImage({
     getRetainedUrl: () => recordedAppearanceGetterAdapterRef.current()?.backgroundImageUrl ?? null,
     setImageMode: () => updateSetting("backgroundMode", "image"),
     setStudioMode: () => updateSetting("backgroundMode", "studio"),
@@ -178,8 +126,9 @@ function App() {
     onInfo: (title, message) => pushToast({ type: "info", title, message }),
     onError: setDeviceError,
   });
+  const { backgroundImageUrl, adoptBackgroundImageUrl } = background;
 
-  const appearance = useRecordedAppearance({
+  const take = useTakePipeline({
     settings,
     identity: {
       vertices: identityVertices,
@@ -197,134 +146,57 @@ function App() {
       gnmFrozen: gnmFrozenExpressionComponents,
       manual: manualExpressions,
       frozen: frozenExpressions,
+      setManual: setManualExpressions,
+      setFrozen: setFrozenExpressions,
     },
-    neutralFrame,
-    backgroundImageUrl,
-    getViewState: getCurrentViewState,
+    capture: {
+      trackingFrame,
+      neutralFrame,
+      paused: capturePaused,
+      microphoneReady: microphoneAccess === "ready",
+      cloneAudioTrack: captureDevices.cloneAudioTrack,
+    },
+    background: { url: backgroundImageUrl, adoptUrl: adoptBackgroundImageUrl },
+    stage: {
+      getCanvas: getStageCanvas,
+      getViewState: getCurrentViewState,
+      setForcedViewState,
+      onViewState: handleViewStateChange,
+    },
+    playback,
+    ffmpeg,
+    recordingElapsed,
+    playbackFrame,
     restoreGnmState,
     restoreNeutralFrame: calibration.restoreNeutralFrame,
     setSettings,
-    setAvatarKind: (avatarKind) => updateSetting("avatarKind", avatarKind),
-    setManual: setManualExpressions,
-    setFrozen: setFrozenExpressions,
-    setViewState: setForcedViewState,
-    adoptBackgroundImageUrl,
-  });
-
-  const recording = useRecordingSession({
-    settings,
-    trackingFrame,
-    neutralFrame,
-    capturePaused,
-    microphoneReady: microphoneAccess === "ready",
-    backgroundImageUrl,
-    getCanvas: getStageCanvas,
-    cloneAudioTrack: captureDevices.cloneAudioTrack,
-    captureAppearance: appearance.captureCurrent,
-    createImportedAppearance: appearance.createImported,
-    applyImportedAppearance: appearance.applyImported,
-    output: {
-      isActive: () => outputRecordingAdapterRef.current.isActive(),
-      begin: (command) => outputRecordingAdapterRef.current.begin(command),
-      pause: (paused) => outputRecordingAdapterRef.current.pause(paused),
-      stop: () => outputRecordingAdapterRef.current.stop(),
-    },
-    playback: {
-      reset: playback.resetSilently,
-      setElapsed: playback.setElapsed,
-      showFrame: playback.showRecordedFrame,
-    },
+    updateSetting,
     openExportWorkspace: () => setActiveWorkspace("export"),
-    onImportedFps: (fps) => updateSetting("exportFps", fps),
+    scheduleTrackerHealthCheck: tracker.scheduleHealthCheck,
+    showSaveResult,
     onToast: pushToast,
     onError: setDeviceError,
   });
+  const { recording, output, exporter } = take;
   const {
-    state: recordingState,
-    frames: recordedFrames,
-    lastVideo,
-    lastAudio,
-    finalizing: captureFinalizing,
+    state: recordingState, frames: recordedFrames, finalizing: captureFinalizing,
     appearance: recordedAppearance,
-    viewState: recordedViewState,
-    videoQuality: lastVideoQuality,
   } = recording;
+  const { popoutState } = output;
+  const {
+    motionVideoRendering, pngSequenceRendering, exportTrimStartMs, exportTrimEndMs,
+    exportPlaybackSpeed,
+  } = exporter;
   recordingStateGetterAdapterRef.current = recording.getState;
   recordingFinalizingGetterAdapterRef.current = () => recording.finalizing;
   recordedAppearanceGetterAdapterRef.current = recording.getAppearance;
   recordedFramesGetterAdapterRef.current = () => recording.frames;
-
-  const output = useOutputPopout({
-    isRecordingActive: () => recording.getState() !== "idle",
-    onRecordingInterrupted: recording.interruptOutput,
-    onRecordResult: recording.acceptOutputVideo,
-    onRecordError: recording.finishOutputError,
-    onViewState: handleViewStateChange,
-    onAvatarMotion: recording.storeAvatarMotion,
-    onToast: pushToast,
-    onError: setDeviceError,
-  });
-  const { ownerPhase: outputOwnerPhase, popoutState } = output;
-  const sendOutputSnapshot = output.sendSnapshot;
-  const sendOutputFrame = output.sendFrame;
-  outputRecordingAdapterRef.current = {
-    isActive: () => output.popoutState === "active",
-    begin: output.beginRecording,
-    pause: output.pauseRecording,
-    stop: output.stopRecording,
-  };
-
-  const exporter = useStudioExport({
-    settings,
-    recordedFrames,
-    recordedViewState,
-    lastVideo,
-    lastAudio,
-    lastVideoQuality,
-    captureFinalizing,
-    manualExpressions,
-    frozenExpressions,
-    neutralFrame,
-    trackingFrame,
-    identityVertices,
-    playbackFrame,
-    recordingElapsed,
-    outputOwnerPhase,
-    popoutState,
-    recording,
-    playback,
-    output,
-    ffmpeg,
-    getCanvas: getStageCanvas,
-    getCurrentViewState,
-    setForcedViewState,
-    showSaveResult,
-    pushToast,
-    setDeviceError,
-    scheduleTrackerHealthCheck: tracker.scheduleHealthCheck,
-  });
-  const {
-    videoExportProgress, videoExportBackend, motionVideoRendering, pngSequenceRendering,
-    pngExportProgress, exportTrimStartMs, exportTrimEndMs,
-    exportPlaybackSpeed, setExportTrimStartMs, setExportTrimEndMs, setExportPlaybackSpeed,
-    exportMotion, captureStill, exportWebm, exportPngSequence, exportVideo, exportWebmSource, exportGlb,
-  } = exporter;
   exportEditAdapterRef.current = {
     trimStartMs: exportTrimStartMs,
     trimEndMs: exportTrimEndMs,
     playbackSpeed: exportPlaybackSpeed,
   };
   exportBusyAdapterRef.current = () => motionVideoRendering || pngSequenceRendering;
-
-  const presetController = usePresets({
-    captureSnapshot: appearance.captureCurrent,
-    applySnapshot: appearance.applyFullSnapshot,
-    onToast: pushToast,
-    onError: setDeviceError,
-    onSaved: (result, count) => showSaveResult("Preset bundle exported", `${count} named full-state preset${count === 1 ? "" : "s"}`, result),
-  });
-  const { presets: fullStatePresets, selectedId: selectedPresetId, name: presetName } = presetController;
-
   const studioControls = useStudioControls({
     capturePaused,
     calibrating,
@@ -340,9 +212,6 @@ function App() {
     setActiveWorkspace,
     onToast: pushToast,
   });
-  const {
-    activateWorkspace, showAvatar, showCapture, toggleCaptureProcessing, togglePause,
-  } = studioControls;
   const derived = useStudioDerivedState({
     settings,
     trackerStatus,
@@ -361,12 +230,7 @@ function App() {
     setManualExpressions,
     setFrozenExpressions,
   });
-  const {
-    faceConfidence, trackingQualityLabel, recordedDuration, playbackDuration,
-    timelineDuration, timelinePosition, timelinePercent, connectedCaptureCount,
-    captureStatusTitle, displayedFrame, activeProfile, toggleExpressionFreeze,
-    resetActiveExpressions,
-  } = derived;
+  const { displayedFrame } = derived;
   const stageOutput = useStageOutputSync({
     settings,
     identityVertices,
@@ -383,160 +247,41 @@ function App() {
     displayedFrame,
     trackingFrame,
     capturePaused,
-    resetViewSignal,
+    resetViewSignal: stage.resetViewSignal,
     popoutState,
     getCurrentTrackingFrame,
     getCurrentViewState,
     attachVideo: captureDevices.attachVideo,
-    sendSnapshot: sendOutputSnapshot,
-    sendFrame: sendOutputFrame,
+    sendSnapshot: output.sendSnapshot,
+    sendFrame: output.sendFrame,
   });
-  const {
-    settings: stageSettings, identityVertices: stageIdentityVertices,
-    manualExpressions: stageManualExpressions, frozenExpressions: stageFrozenExpressions,
-    neutralFrame: stageNeutralFrame, backgroundImageUrl: stageBackgroundImageUrl,
-  } = stageOutput;
-  return (
-    <>
-    <main
-      className={`app-shell ${isWebEdition ? "web-edition" : "desktop-edition"} ${leftSidebarCollapsed ? "left-sidebar-collapsed" : ""} ${rightSidebarCollapsed ? "right-sidebar-collapsed" : ""} ${recordingState === "recording" ? "is-recording" : ""} ${fullscreen ? "viewport-focus" : ""} ${outputControlsHidden ? "output-controls-hidden" : ""}`}
-      style={{ "--ui-scale": (uiScale / 100).toFixed(2) } as React.CSSProperties}
-      onPointerMove={fullscreen ? scheduleOutputControls : undefined}
-    >
-      <StudioTopBar
-        web={isWebEdition}
-        workspace={activeWorkspace}
-        activateWorkspace={activateWorkspace}
-        capture={{ paused: capturePaused, calibrating, finalizing: captureFinalizing, cameraAccess, microphoneAccess, statusTitle: captureStatusTitle, connectedCount: connectedCaptureCount, toggle: toggleCaptureProcessing }}
-        backend={{ menuOpen: Boolean(backendMenu), trackerStatus, delegate: trackerDelegate, openMenu: (x, y) => { setSettingsOpen(false); tracker.openBackendMenu(x, y); } }}
-        recording={{ state: recordingState, elapsed: recordingElapsed }}
-        settings={{ open: settingsOpen, toggle: () => setSettingsOpen((value) => !value) }}
-      />
-
-      <LeftSidebar
-        collapsed={leftSidebarCollapsed}
-        activePanel={activePanel}
-        toggleCollapsed={() => setLeftSidebarCollapsed((value) => !value)}
-        showAvatar={showAvatar}
-        showCapture={showCapture}
-        avatarContent={<>
-          <AvatarModelPanel avatarKind={settings.avatarKind} gnmInfo={gnmInfo} select={(avatarKind) => { updateSetting("avatarKind", avatarKind); pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: avatarKind === "facecap" ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." }); }} />
-          {activeProfile.supportsIdentity && <IdentityPanel seed={identitySeed} presentation={identityGender} population={identityEthnicity} presentationStrength={identityPresentationStrength} populationWeights={identityPopulationWeights} status={identityStatus} recordingIdle={recordingState === "idle"} web={isWebEdition} webBackend={webIdentityBackend} setSeed={identity.setSeed} setPresentation={identity.choosePresentation} setPopulation={identity.choosePopulation} setPresentationStrength={identity.setPresentationStrength} setPopulationWeight={identity.updatePopulationWeight} randomize={identity.randomize} comparePresentation={identity.comparePresentation} generate={() => void identity.generate()} />}
-          <PresetPanel presets={fullStatePresets} selectedId={selectedPresetId} name={presetName} recordingIdle={recordingState === "idle"} inputRef={presetInputRef} select={presetController.select} setName={presetController.setName} save={presetController.save} load={presetController.load} update={presetController.update} rename={presetController.rename} remove={presetController.remove} exportBundle={() => void presetController.exportBundle()} />
-          <AvatarAppearancePanels settings={settings} updateSetting={updateSetting} />
-          <ExpressionPanel avatarKind={settings.avatarKind} avatarLabel={activeProfile.shortLabel} expressionCount={activeProfile.expressionCount} manual={manualExpressions} frozen={frozenExpressions} disabled={recordingState !== "idle" || captureFinalizing} setManual={(name, value) => setManualExpressions((current) => ({ ...current, [name]: value }))} toggleFreeze={toggleExpressionFreeze} resetExpressions={resetActiveExpressions} resetJoints={() => { const names = new Set<string>(manualJointGroups.flatMap((group) => group.controls.map(([name]) => name))); setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); }} gnm={{ semanticA: gnmExpressionA, semanticB: gnmExpressionB, seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend, weights: gnmExpressionWeights, frozen: gnmFrozenExpressionComponents, ready: expressionDecoderReady, busy: gnmExpressionStatus === "evaluating", backend: isDesktopRuntime ? "Native Rust" : webIdentityBackend === "webgpu" ? "WebGPU worker" : "CPU worker", setSemanticA: expression.setSemanticA, setSemanticB: expression.setSemanticB, setSeedA: expression.setSeedA, setSeedB: expression.setSeedB, resampleA: expression.resampleA, resampleB: expression.resampleB, setBlend: expression.setBlend, setWeight: expression.setWeight, toggleFreeze: expression.toggleFreeze, mirror: expression.mirror, reset: expression.reset }} />
-        </>}
-        captureContent={<CaptureSidebarContent web={isWebEdition} settings={settings} cameras={cameras} cameraReady={cameraAccess === "ready"} permissionAsking={permissionState === "asking"} ffmpegStatus={ffmpegStatus} ffmpegVersion={ffmpegVersion} updateSetting={updateSetting} enumerateDevices={() => void captureDevices.enumerateDevices()} requestAccess={() => void captureDevices.requestAccess()} checkFfmpeg={() => void ffmpeg.check()} chooseFfmpeg={() => void ffmpeg.choose()} openFfmpegDownload={() => void openExternal("https://ffmpeg.org/download.html")} />}
-      />
-      <StudioViewport
-        workspace={activeWorkspace}
-        settings={settings}
-        updateSetting={updateSetting}
-        calibrating={calibrating}
-        exportBusy={videoExportProgress !== null}
-        pngBusy={pngSequenceRendering}
-        fullscreen={fullscreen}
-        popout={{ state: popoutState, recordingIdle: recordingState === "idle", open: () => void output.open(activeProfile.label), close: output.close, focus: output.focus }}
-        captureStill={() => void captureStill()}
-        resetView={resetView}
-        toggleFullscreen={() => void toggleFullscreen()}
-        stageProps={{
-          avatarKind: stageSettings.avatarKind,
-          videoRef,
-          frame: displayedFrame,
-          neutralFrame: stageNeutralFrame,
-          showWebcam: calibrating || stageSettings.showWebcam,
-          showAvatar: !calibrating && (motionVideoRendering || pngSequenceRendering || stageSettings.showAvatar),
-          showLandmarks: !calibrating && stageSettings.showLandmarks,
-          mirror: stageSettings.mirror,
-          opacity: stageSettings.avatarOpacity,
-          wireframe: stageSettings.wireframe,
-          skinTextureEnabled: stageSettings.skinTextureEnabled,
-          skinTone: stageSettings.skinTone,
-          skinTextureScale: stageSettings.skinTextureScale,
-          skinTextureRotation: stageSettings.skinTextureRotation,
-          skinTextureFeather: stageSettings.skinTextureFeather,
-          eyeShaderEnabled: stageSettings.eyeShaderEnabled,
-          eyeColor: stageSettings.eyeColor,
-          backgroundMode: stageSettings.backgroundMode,
-          backgroundColor: stageSettings.backgroundColor,
-          backgroundImageUrl: stageBackgroundImageUrl,
-          backgroundImageZoom: stageSettings.backgroundImageZoom,
-          mouseLightEnabled: stageSettings.mouseLightEnabled,
-          mouseLightIntensity: stageSettings.mouseLightIntensity,
-          headPoseSettings: { enabled: stageSettings.headRotationEnabled, yawStrength: stageSettings.headYawStrength, pitchStrength: stageSettings.headPitchStrength, rollStrength: stageSettings.headRollStrength, deadZone: stageSettings.headRotationDeadZone, smoothing: stageSettings.headRotationSmoothing },
-          calibrating,
-          calibrationComplete,
-          faceAlignment: calibrationFaceAlignment,
-          countdown,
-          trackingReady: Boolean(trackingFrame),
-          identityVertices: stageIdentityVertices,
-          manualExpressions: stageManualExpressions,
-          frozenExpressions: stageFrozenExpressions,
-          recordingMode: motionVideoRendering || pngSequenceRendering ? "avatar" : stageSettings.recordingMode,
-          recordingActive: motionVideoRendering || pngSequenceRendering || recordingState !== "idle",
-          resetViewSignal,
-          viewStateOverride: forcedViewState,
-          onCancelCalibration: calibration.cancel,
-          onCompositeCanvas: handleCompositeCanvas,
-          onStageError: handleStageError,
-          onViewportResize: handleViewportResize,
-          onViewStateChange: handleViewStateChange,
-          onAvatarMotion: recording.storeAvatarMotion,
-        }}
-        exportProps={{
-          hasTake: recordedFrames.length > 0,
-          hasVideo: Boolean(lastVideo),
-          durationMs: recordedDuration,
-          frameCount: recordedFrames.length,
-          width: settings.exportWidth,
-          height: settings.exportHeight,
-          fps: settings.exportFps,
-          trimStartMs: exportTrimStartMs,
-          trimEndMs: exportTrimEndMs || recordedDuration,
-          speed: exportPlaybackSpeed,
-          busy: captureFinalizing || videoExportProgress !== null || pngSequenceRendering,
-          progress: pngExportProgress ?? videoExportProgress,
-          onWidthChange: (value) => updateSetting("exportWidth", Math.min(7680, Math.max(64, Math.round(value / 2) * 2))),
-          onHeightChange: (value) => updateSetting("exportHeight", Math.min(4320, Math.max(64, Math.round(value / 2) * 2))),
-          onFpsChange: (value) => updateSetting("exportFps", Math.min(120, Math.max(1, Math.round(value)))),
-          onTrimStartChange: (value) => { setExportTrimStartMs(Math.min(exportTrimEndMs || recordedDuration, Math.max(0, value))); playback.setElapsed(0); playback.setFrame(null); },
-          onTrimEndChange: (value) => { setExportTrimEndMs(Math.min(recordedDuration, Math.max(exportTrimStartMs, value))); playback.setElapsed(0); playback.setFrame(null); },
-          onSpeedChange: (value) => { setExportPlaybackSpeed(Math.min(4, Math.max(0.1, value))); playback.setElapsed(0); playback.setFrame(null); },
-          onExportMp4: () => void exportVideo(),
-          onExportWebm: () => void exportWebm(),
-          onExportPng: () => void exportPngSequence(),
-          onReturn: () => activateWorkspace("capture"),
-        }}
-        accessPrompt={activeWorkspace !== "export" && permissionState !== "ready" && !devicePromptDismissed ? <DeviceAccessPrompt permissionState={permissionState} error={deviceError} requestAccess={() => void captureDevices.requestAccess()} continueWithoutCapture={captureDevices.continueWithoutCapture} /> : undefined}
-      />
-      <RightSidebar
-        collapsed={rightSidebarCollapsed}
-        toggleCollapsed={() => setRightSidebarCollapsed((value) => !value)}
-        tracking={{ status: trackerStatus, score: faceConfidence, label: trackingQualityLabel, fallbackReason: trackerFallbackReason, delegate: trackerDelegate, cameraReady: cameraAccess === "ready", reload: () => tracker.reload() }}
-        settings={settings}
-        updateSetting={updateSetting}
-        avatarLabel={activeProfile.shortLabel}
-        calibrating={calibrating}
-        calibration={{ neutralFrame, readiness: calibrationReadiness, recordingIdle: recordingState === "idle", trackerReady: trackerStatus === "ready", hasFrame: Boolean(trackingFrame), start: () => void calibration.calibrate() }}
-        background={{ url: backgroundImageUrl, name: backgroundImageName, inputRef: backgroundInputRef, clear: () => void clearBackgroundImage() }}
-      />
-      <TransportDock
-        audio={{ devices: microphones, selectedId: settings.microphoneId, level: audioLevel, peak: audioPeak, muted: settings.muted, monitoring, select: (id) => updateSetting("microphoneId", id), toggleMute: () => updateSetting("muted", !settings.muted), toggleMonitoring: () => captureDevices.setMonitoring((value) => !value), refresh: () => void captureDevices.enumerateDevices() }}
-        recording={{ state: recordingState, elapsed: recordingElapsed, frameCount: recordedFrames.length, draftFrameCount: recording.draftFrameCount, playing, playbackActive: Boolean(playbackFrame || playing), calibrating, finalizing: captureFinalizing, videoBusy: videoExportProgress !== null, popoutStarting: popoutState === "starting", motionNeedsFace: !trackingFrame && settings.recordingMode === "motion", start: () => void recording.start(), stop: recording.stop, togglePause, returnLive: playback.returnToLive }}
-        timeline={{ percent: timelinePercent, duration: timelineDuration, position: timelinePosition, recordedDuration, playbackDuration, seek: playback.seek }}
-        exports={{ fps: settings.exportFps, motionInputRef, hasTake: recordedFrames.length > 0, hasVideo: Boolean(lastVideo), sourceIsWebm: Boolean(lastVideo && !lastVideo.type.includes("mp4")), videoProgress: videoExportProgress, backend: videoExportBackend, setFps: (value) => updateSetting("exportFps", value), useCurrentLook: recording.useCurrentAppearance, exportMotion: () => void exportMotion(), exportGlb: () => void exportGlb(), exportWebmSource: () => void exportWebmSource(), exportVideo: () => void exportVideo() }}
-      />
-      <ToastCenter
-        toasts={toasts}
-        onDismiss={dismissToast}
-      />
-      <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void recording.importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void presetController.importBundle(file)} />
-    </main>
-    {backendMenu && createPortal(<BackendMenu position={backendMenu} backend={settings.trackingBackend} gpuProbe={gpuProbe} cpuProbe={cpuProbe} close={tracker.closeBackendMenu} select={tracker.selectBackend} />, document.body)}
-    {settingsOpen && createPortal(<SettingsPopover web={isWebEdition} theme={theme} accent={accent} uiScale={uiScale} settings={settings} appVersion={appVersion} close={() => setSettingsOpen(false)} setTheme={setTheme} setAccent={setAccent} setUiScale={setUiScale} updateSetting={updateSetting} openExternal={(url) => void openExternal(url)} />, document.body)}
-    </>
-  );
+  return <StudioShell
+    settingsController={settingsController}
+    fullscreenController={fullscreenController}
+    metadata={metadata}
+    captureTracking={captureTracking}
+    gnm={gnm}
+    take={take}
+    controls={studioControls}
+    derived={derived}
+    stage={stage}
+    stageOutput={stageOutput}
+    background={background}
+    ffmpeg={ffmpeg}
+    saveFeedback={saveFeedback}
+    notifications={notifications}
+    activePanel={activePanel}
+    activeWorkspace={activeWorkspace}
+    manualExpressions={manualExpressions}
+    frozenExpressions={frozenExpressions}
+    setManualExpressions={setManualExpressions}
+    setFrozenExpressions={setFrozenExpressions}
+    backgroundInputRef={backgroundInputRef}
+    motionInputRef={motionInputRef}
+    presetInputRef={presetInputRef}
+    deviceError={deviceError}
+    updateSetting={updateSetting}
+  />;
 }
 
 export default App;

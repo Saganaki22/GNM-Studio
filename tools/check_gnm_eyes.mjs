@@ -167,7 +167,7 @@ assert.ok(exportSource.includes("gnmEyeMaterials = installGnmEyeMaterials("), "G
 assert.ok(exportSource.includes("options.eyeColor"), "GNM GLB export does not preserve the selected eye colour");
 const appSource = [
   "../src/App.tsx", "../src/features/presets/usePresets.ts", "../src/features/export/useStudioExport.ts",
-  "../src/features/stage/useStageOutputSync.ts",
+  "../src/features/stage/useStageOutputSync.ts", "../src/app/StudioShell.tsx",
 ]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
