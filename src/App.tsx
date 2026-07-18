@@ -11,7 +11,6 @@ import { StudioViewport } from "./features/stage/StudioViewport";
 import { useStagePresentation } from "./features/stage/useStagePresentation";
 import { useStageOutputSync } from "./features/stage/useStageOutputSync";
 import { DeviceAccessPrompt } from "./features/devices/DeviceAccessPrompt";
-import { useCaptureDevices } from "./features/capture/useCaptureDevices";
 import { ExpressionPanel } from "./features/expression/ExpressionPanel";
 import { useFullscreenControls } from "./features/fullscreen/useFullscreenControls";
 import { useGnmRuntime } from "./features/gnm/useGnmRuntime";
@@ -20,7 +19,6 @@ import { PresetPanel } from "./features/presets/PresetPanel";
 import { usePresets } from "./features/presets/usePresets";
 import { useOutputPopout } from "./features/output/useOutputPopout";
 import { TransportDock } from "./features/recording/TransportDock";
-import { usePlayback } from "./features/recording/usePlayback";
 import { useRecordingSession } from "./features/recording/useRecordingSession";
 import { useRecordedAppearance } from "./features/recording/useRecordedAppearance";
 import { useFfmpegEncoder } from "./features/export/useFfmpegEncoder";
@@ -33,8 +31,7 @@ import { useStudioMetadata } from "./features/shell/useStudioMetadata";
 import { useStudioDerivedState } from "./features/shell/useStudioDerivedState";
 import { useStudioControls } from "./features/shell/useStudioControls";
 import { BackendMenu } from "./features/tracking/BackendMenu";
-import { useFaceTracker } from "./features/tracking/useFaceTracker";
-import { useNeutralCalibration } from "./features/tracking/useNeutralCalibration";
+import { useCaptureTrackingPipeline } from "./features/tracking/useCaptureTrackingPipeline";
 import { useToasts } from "./features/toasts/useToasts";
 import { ToastCenter } from "./components/ToastCenter";
 import { avatarProfiles } from "./lib/avatarProfiles";
@@ -42,9 +39,8 @@ import type { MainToOutputCommand } from "./lib/outputChannel";
 import { recordingAppearanceSettingKeys } from "./lib/recordingAppearance";
 import type {
   AppSettings,
-  RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
+  RecordedFrame, RecordedTakeSnapshot, TrackingBackend,
 } from "./types";
-import { trimAndRetimeMotion } from "./lib/motionEdit";
 import { isDesktopRuntime, isWebEdition, manualJointGroups, type Workspace } from "./app/studioConfig";
 import "./App.css";
 
@@ -79,7 +75,10 @@ function App() {
   const { gnmInfo, appVersion } = useStudioMetadata({ deviceError, onToast: pushToast, onError: setDeviceError });
   const recordingStateGetterAdapterRef = useRef<() => "idle" | "recording" | "paused">(() => "idle");
   const isRecordingIdle = useCallback(() => recordingStateGetterAdapterRef.current() === "idle", []);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const recordingFinalizingGetterAdapterRef = useRef<() => boolean>(() => false);
+  const recordedAppearanceGetterAdapterRef = useRef<() => RecordedTakeSnapshot | null>(() => null);
+  const recordedFramesGetterAdapterRef = useRef<() => RecordedFrame[]>(() => []);
+  const exportEditAdapterRef = useRef({ trimStartMs: 0, trimEndMs: 0, playbackSpeed: 1 });
   const resolveCaptureDeviceSelection = useCallback((cameraOptions: { id: string }[], microphoneOptions: { id: string }[]) => {
     setSettings((current) => ({
       ...current,
@@ -89,20 +88,37 @@ function App() {
         ? current.microphoneId : microphoneOptions[0]?.id ?? "",
     }));
   }, [setSettings]);
-  const captureDevices = useCaptureDevices({
-    videoRef,
-    cameraId: settings.cameraId,
-    microphoneId: settings.microphoneId,
-    cameraFps: settings.cameraFps,
-    muted: settings.muted,
-    resolveSelection: resolveCaptureDeviceSelection,
+  const changeTrackingBackend = useCallback((backend: TrackingBackend) => {
+    setSettings((current) => ({ ...current, trackingBackend: backend }));
+  }, [setSettings]);
+  const captureTracking = useCaptureTrackingPipeline({
+    settings,
+    stageSize,
+    workspace: activeWorkspace,
+    isRecordingIdle,
+    getRecordedFrames: () => recordedFramesGetterAdapterRef.current(),
+    getRecordedAppearance: () => recordedAppearanceGetterAdapterRef.current(),
+    getExportEdit: () => exportEditAdapterRef.current,
+    resolveDeviceSelection: resolveCaptureDeviceSelection,
+    changeTrackingBackend,
     onToast: pushToast,
     onError: setDeviceError,
   });
+  const { videoRef, capture: captureDevices, playback, tracker, calibration } = captureTracking;
   const {
     cameras, microphones, permissionState, cameraAccess, microphoneAccess, devicePromptDismissed,
     paused: capturePaused, monitoring, audioLevel, audioPeak,
   } = captureDevices;
+  const { playing, frame: playbackFrame, elapsed: recordingElapsed } = playback;
+  const {
+    frame: trackingFrame, status: trackerStatus, delegate: trackerDelegate,
+    fallbackReason: trackerFallbackReason, gpuProbe, cpuProbe, backendMenu,
+  } = tracker;
+  const getCurrentTrackingFrame = tracker.getCurrentFrame;
+  const {
+    neutralFrame, calibrating, complete: calibrationComplete, countdown,
+    faceAlignment: calibrationFaceAlignment, readiness: calibrationReadiness,
+  } = calibration;
   const { identity, expression, restoreState: restoreGnmState } = useGnmRuntime({
     avatarKind: settings.avatarKind,
     isRecordingIdle,
@@ -123,12 +139,6 @@ function App() {
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const motionInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
-  const neutralFrameGetterAdapterRef = useRef<() => TrackingFrame | null>(() => null);
-  const playbackLandmarkGetterAdapterRef = useRef<() => { x: number; y: number; z: number }[]>(() => []);
-  const recordingFinalizingGetterAdapterRef = useRef<() => boolean>(() => false);
-  const recordedAppearanceGetterAdapterRef = useRef<() => RecordedTakeSnapshot | null>(() => null);
-  const recordedFramesGetterAdapterRef = useRef<() => RecordedFrame[]>(() => []);
-  const exportEditAdapterRef = useRef({ trimStartMs: 0, trimEndMs: 0, playbackSpeed: 1 });
   const exportBusyAdapterRef = useRef<() => boolean>(() => false);
   const outputRecordingAdapterRef = useRef<OutputRecordingBridge>({
     isActive: () => false,
@@ -137,73 +147,6 @@ function App() {
     stop: () => {},
   });
 
-
-  const getPlaybackFrames = useCallback(() => {
-    const currentFrames = recordedFramesGetterAdapterRef.current();
-    const edit = exportEditAdapterRef.current;
-    return activeWorkspace === "export"
-      ? trimAndRetimeMotion(
-        currentFrames,
-        edit.trimStartMs,
-        edit.trimEndMs || (currentFrames.at(-1)?.timestamp ?? 0),
-        edit.playbackSpeed,
-        settings.exportFps,
-      )
-      : currentFrames;
-  }, [activeWorkspace, settings.exportFps]);
-  const getPlaybackLandmarks = useCallback(() => playbackLandmarkGetterAdapterRef.current(), []);
-  const playback = usePlayback({
-    isRecordingIdle,
-    cameraReady: cameraAccess === "ready",
-    getFrames: getPlaybackFrames,
-    getLandmarks: getPlaybackLandmarks,
-    onToast: pushToast,
-  });
-  const { playing, frame: playbackFrame, elapsed: recordingElapsed } = playback;
-  const prepareTrackerReload = playback.resetSilently;
-  const changeTrackingBackend = useCallback((backend: TrackingBackend) => {
-    setSettings((current) => ({ ...current, trackingBackend: backend }));
-  }, [setSettings]);
-  const getNeutralFrameForTracking = useCallback(() => neutralFrameGetterAdapterRef.current(), []);
-  const tracker = useFaceTracker({
-    cameraReady: cameraAccess === "ready",
-    videoRef,
-    paused: capturePaused,
-    backend: settings.trackingBackend,
-    fps: settings.trackingFps,
-    trackingSmoothing: settings.trackingSmoothingEnabled ? settings.trackingSmoothing : 0,
-    motionSmoothing: settings.motionSmoothingEnabled ? settings.motionSmoothing : 0,
-    getNeutralFrame: getNeutralFrameForTracking,
-    mouthDeadZone: settings.mouthDeadZone,
-    onBackendChange: changeTrackingBackend,
-    onBeforeReload: prepareTrackerReload,
-    onToast: pushToast,
-    onError: setDeviceError,
-  });
-  const {
-    frame: trackingFrame, status: trackerStatus, delegate: trackerDelegate,
-    fallbackReason: trackerFallbackReason, gpuProbe, cpuProbe, backendMenu,
-  } = tracker;
-  const getCurrentTrackingFrame = tracker.getCurrentFrame;
-  const calibration = useNeutralCalibration({
-    videoRef,
-    stageSize,
-    mirror: settings.mirror,
-    cameraReady: cameraAccess === "ready",
-    isRecordingIdle,
-    frame: trackingFrame,
-    getCurrentFrame: getCurrentTrackingFrame,
-    onNeutralChanged: tracker.resetFilters,
-    onToast: pushToast,
-  });
-  const {
-    neutralFrame, calibrating, complete: calibrationComplete, countdown,
-    faceAlignment: calibrationFaceAlignment, readiness: calibrationReadiness,
-  } = calibration;
-  neutralFrameGetterAdapterRef.current = calibration.getNeutralFrame;
-  playbackLandmarkGetterAdapterRef.current = () => (
-    recordedAppearanceGetterAdapterRef.current()?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? []
-  );
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     if ((recordingStateGetterAdapterRef.current() !== "idle" || recordingFinalizingGetterAdapterRef.current() || exportBusyAdapterRef.current()) && recordingAppearanceSettingKeys.has(key)) {
