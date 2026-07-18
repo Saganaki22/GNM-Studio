@@ -7,6 +7,7 @@ const app = [
   "../src/features/shell/StudioTopBar.tsx",
   "../src/features/capture/useCaptureDevices.ts",
   "../src/features/capture/useAudioMonitor.ts",
+  "../src/features/output/useOutputPopout.ts",
 ]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");

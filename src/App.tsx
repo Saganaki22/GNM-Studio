@@ -16,6 +16,7 @@ import { useGnmRuntime } from "./features/gnm/useGnmRuntime";
 import { IdentityPanel } from "./features/identity/IdentityPanel";
 import { PresetPanel } from "./features/presets/PresetPanel";
 import { usePresets } from "./features/presets/usePresets";
+import { useOutputPopout } from "./features/output/useOutputPopout";
 import { TransportDock } from "./features/recording/TransportDock";
 import { LeftSidebar } from "./features/shell/LeftSidebar";
 import { StudioFileInputs } from "./features/shell/StudioFileInputs";
@@ -28,9 +29,7 @@ import { ToastCenter } from "./components/ToastCenter";
 import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
 import { createAnimatedGlb } from "./lib/glbExport";
 import { avatarProfiles, facecapInfluences } from "./lib/avatarProfiles";
-import {
-  outputChannelName, type MainToOutputCommand, type MainToOutputMessage, type OutputOwnerPhase, type OutputSnapshot, type OutputToMainMessage,
-} from "./lib/outputChannel";
+import type { OutputSnapshot } from "./lib/outputChannel";
 import { parseMotionFile } from "./lib/motionFile";
 import { mouthOpenInfluence, semanticInfluences } from "./lib/retarget";
 import type { ViewportSize } from "./lib/coverProjection";
@@ -45,7 +44,6 @@ import type {
 } from "./types";
 import { canvasPngBlob } from "./lib/canvasCapture";
 import { createStoredZip } from "./lib/zipStore";
-import { canMountStudioRenderer, outputOwnerBusy, phaseFromHeartbeat } from "./lib/outputOwner";
 import { trimAndRetimeMotion } from "./lib/motionEdit";
 import { afterBrowserPaint, formatTime, timestampedFilename } from "./lib/studioFormat";
 import { applyNeutralBaseline, estimateTrackingQuality, playbackTrackingFrame, recordedFrameAtTime } from "./lib/trackingFrames";
@@ -88,12 +86,6 @@ function App() {
   const [activePanel, setActivePanel] = useState<"avatar" | "capture">(isWebEdition ? "capture" : "avatar");
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>(isWebEdition ? "capture" : "create");
   const { fullscreen, controlsHidden: outputControlsHidden, scheduleControls: scheduleOutputControls, toggle: toggleFullscreen } = useFullscreenControls(settings, setDeviceError);
-  const [outputOwnerPhase, setOutputOwnerPhase] = useState<OutputOwnerPhase>("studio");
-  const popoutState = canMountStudioRenderer(outputOwnerPhase)
-    ? "idle"
-    : outputOwnerPhase === "connecting"
-      ? "starting"
-      : "active";
   const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const { toasts, pushToast, dismissToast } = useToasts();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -154,26 +146,10 @@ function App() {
   const mediaChunksRef = useRef<Blob[]>([]);
   const avatarCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recordingTickerRef = useRef<number | null>(null);
-  const outputChannelRef = useRef<BroadcastChannel | null>(null);
-  const outputHeartbeatRef = useRef(0);
-  const outputOwnerPhaseRef = useRef<OutputOwnerPhase>(outputOwnerPhase);
-  const outputSessionRef = useRef("");
-  const activeOutputRecordingRequestRef = useRef("");
-  const outputRecordingWaitersRef = useRef(new Map<string, {
-    startResolve?: () => void;
-    startReject?: (error: Error) => void;
-    resultResolve?: (blob: Blob) => void;
-    resultReject?: (error: Error) => void;
-    startTimer?: number;
-    resultTimer?: number;
-  }>());
-  const outputPngWaitersRef = useRef(new Map<string, { resolve: (blob: Blob) => void; reject: (error: Error) => void; timer: number }>());
-  const webPopoutRef = useRef<Window | null>(null);
   const playbackAnimationRef = useRef<number | null>(null);
   const neutralFrameGetterAdapterRef = useRef<() => TrackingFrame | null>(() => null);
 
   capturePausedRef.current = capturePaused;
-  outputOwnerPhaseRef.current = outputOwnerPhase;
 
   const prepareTrackerReload = useCallback(() => {
     if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
@@ -232,126 +208,28 @@ function App() {
     }
   }, []);
 
-  const rejectOutputWaiters = useCallback((reason: string) => {
-    const error = new Error(reason);
-    for (const waiter of outputRecordingWaitersRef.current.values()) {
-      if (waiter.startTimer) window.clearTimeout(waiter.startTimer);
-      if (waiter.resultTimer) window.clearTimeout(waiter.resultTimer);
-      waiter.startReject?.(error);
-      waiter.resultReject?.(error);
-    }
-    outputRecordingWaitersRef.current.clear();
-    for (const waiter of outputPngWaitersRef.current.values()) {
-      window.clearTimeout(waiter.timer);
-      waiter.reject(error);
-    }
-    outputPngWaitersRef.current.clear();
+  const interruptOutputRecording = useCallback(() => {
+    if (recordingTickerRef.current) window.clearInterval(recordingTickerRef.current);
+    setRecordedFrames([...recordingFramesRef.current]);
+    setRecordingState("idle");
+    setCaptureFinalizing(false);
   }, []);
-
-  useEffect(() => {
-    if (typeof BroadcastChannel === "undefined") return;
-    const channel = new BroadcastChannel(outputChannelName);
-    outputChannelRef.current = channel;
-    channel.onmessage = (event: MessageEvent<OutputToMainMessage>) => {
-      const message = event.data;
-      if (!outputSessionRef.current || message.ownerId !== outputSessionRef.current) return;
-      if (message.type === "ready") {
-        outputHeartbeatRef.current = Date.now();
-        setOutputOwnerPhase("popout-ready");
-        pushToast({ type: "success", title: "Output popout connected", message: "The popout now owns the only 3D renderer. Camera tracking and controls remain in the studio." });
-      } else if (message.type === "heartbeat") {
-        outputHeartbeatRef.current = message.timestamp;
-        if (outputOwnerPhaseRef.current !== "closing" && outputOwnerPhaseRef.current !== "restoring") {
-          setOutputOwnerPhase((current) => phaseFromHeartbeat(current, message.phase));
-        }
-      } else if (message.type === "closed") {
-        const graceful = outputOwnerPhaseRef.current === "closing" || outputOwnerPhaseRef.current === "restoring";
-        if (!graceful) {
-          rejectOutputWaiters("The output popout closed before its active operation completed.");
-          if (recordingTickerRef.current) window.clearInterval(recordingTickerRef.current);
-          setRecordedFrames([...recordingFramesRef.current]);
-          setRecordingState("idle");
-          setCaptureFinalizing(false);
-          pushToast({ type: "warning", title: "Output popout closed", message: "The studio renderer was recovered. Captured motion frames remain available, but unfinished popout video pixels could not be finalized." });
-        }
-        setOutputOwnerPhase("studio");
-        outputHeartbeatRef.current = 0;
-        outputSessionRef.current = "";
-      } else if (message.type === "shutdown-ready") {
-        setOutputOwnerPhase("restoring");
-        channel.postMessage({ type: "close", ownerId: message.ownerId } satisfies MainToOutputMessage);
-        webPopoutRef.current?.close();
-      } else if (message.type === "record-state") {
-        const waiter = outputRecordingWaitersRef.current.get(message.requestId);
-        if (message.state === "recording") {
-          if (waiter?.startTimer) window.clearTimeout(waiter.startTimer);
-          waiter?.startResolve?.();
-          if (waiter) {
-            waiter.startResolve = undefined;
-            waiter.startReject = undefined;
-            waiter.startTimer = undefined;
-          }
-          setOutputOwnerPhase("popout-recording");
-        } else if (message.state === "encoding") {
-          setOutputOwnerPhase("popout-encoding");
-        } else if (message.state === "ready" && outputOwnerPhaseRef.current !== "closing") {
-          setOutputOwnerPhase("popout-ready");
-        }
-      } else if (message.type === "record-result") {
-        setLastVideo(message.blob);
-        setCaptureFinalizing(false);
-        if (activeOutputRecordingRequestRef.current === message.requestId) activeOutputRecordingRequestRef.current = "";
-        const waiter = outputRecordingWaitersRef.current.get(message.requestId);
-        if (waiter?.resultTimer) window.clearTimeout(waiter.resultTimer);
-        waiter?.resultResolve?.(message.blob);
-        outputRecordingWaitersRef.current.delete(message.requestId);
-      } else if (message.type === "png-result") {
-        const waiter = outputPngWaitersRef.current.get(message.requestId);
-        if (waiter) {
-          window.clearTimeout(waiter.timer);
-          waiter.resolve(message.blob);
-          outputPngWaitersRef.current.delete(message.requestId);
-        }
-      } else if (message.type === "view-state") {
-        currentViewStateRef.current = message.viewState;
-      } else if (message.type === "avatar-motion") {
-        storeAvatarMotion(message.sample, message.frameTimestamp);
-      } else if (message.type === "error") {
-        if (message.operation === "Popout microphone") {
-          pushToast({ type: "warning", title: "Popout recording has no microphone", message: message.message, duration: 8_000 });
-        } else {
-          if (message.operation === "Popout recording") {
-            setCaptureFinalizing(false);
-            rejectOutputWaiters(message.message);
-          }
-          if (message.operation === "Popout PNG capture") rejectOutputWaiters(message.message);
-          setDeviceError(`${message.operation}: ${message.message}`);
-        }
-      }
-    };
-    return () => {
-      channel.close();
-      outputChannelRef.current = null;
-    };
-  }, [pushToast, rejectOutputWaiters, storeAvatarMotion]);
-
-  useEffect(() => {
-    if (outputOwnerPhase === "studio" || outputOwnerPhase === "connecting" || outputOwnerPhase === "failed") return;
-    const monitor = window.setInterval(() => {
-      if (Date.now() - outputHeartbeatRef.current < 4_000) return;
-      setOutputOwnerPhase("failed");
-      rejectOutputWaiters("The output popout disconnected before the requested operation completed.");
-      if (recordingState !== "idle") {
-        setRecordedFrames([...recordingFramesRef.current]);
-        setRecordingState("idle");
-        setCaptureFinalizing(false);
-        if (recordingTickerRef.current) window.clearInterval(recordingTickerRef.current);
-      }
-      requestAnimationFrame(() => setOutputOwnerPhase("studio"));
-      pushToast({ type: "warning", title: "Output popout disconnected", message: "The studio renderer was restored without creating a duplicate. Motion frames remain available; an unfinished popout video container could not be recovered." });
-    }, 1_000);
-    return () => window.clearInterval(monitor);
-  }, [outputOwnerPhase, pushToast, recordingState, rejectOutputWaiters]);
+  const output = useOutputPopout({
+    isRecordingActive: () => recordingState !== "idle",
+    onRecordingInterrupted: interruptOutputRecording,
+    onRecordResult: (blob) => {
+      setLastVideo(blob);
+      setCaptureFinalizing(false);
+    },
+    onRecordError: () => setCaptureFinalizing(false),
+    onViewState: (viewState) => { currentViewStateRef.current = viewState; },
+    onAvatarMotion: storeAvatarMotion,
+    onToast: pushToast,
+    onError: setDeviceError,
+  });
+  const { ownerPhase: outputOwnerPhase, popoutState } = output;
+  const sendOutputSnapshot = output.sendSnapshot;
+  const sendOutputFrame = output.sendFrame;
 
   useEffect(() => {
     if (!isDesktopRuntime || settings.videoEncoderBackend === "webcodecs") {
@@ -473,8 +351,7 @@ function App() {
     if (synchronizeRecording && recordingState !== "idle") {
       const recordingMode = recordedAppearanceRef.current?.settings.recordingMode ?? settings.recordingMode;
       if (popoutState === "active" && recordingMode !== "motion") {
-        const requestId = activeOutputRecordingRequestRef.current;
-        if (requestId) postToOutput({ type: "record", action: paused ? "pause" : "resume", requestId });
+        output.pauseRecording(paused);
       } else if (mediaRecorderRef.current) {
         if (paused && mediaRecorderRef.current.state === "recording") mediaRecorderRef.current.pause();
         if (!paused && mediaRecorderRef.current.state === "paused") mediaRecorderRef.current.resume();
@@ -533,111 +410,6 @@ function App() {
         target?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")?.focus({ preventScroll: true });
       }
     }, 0);
-  };
-
-  const postToOutput = (command: MainToOutputCommand) => {
-    const ownerId = outputSessionRef.current;
-    if (!ownerId) return;
-    outputChannelRef.current?.postMessage({ ...command, ownerId } satisfies MainToOutputMessage);
-  };
-
-  const beginOutputRecording = (command: Omit<Extract<MainToOutputCommand, { type: "record"; action: "start" }>, "type" | "action">) => new Promise<void>((resolve, reject) => {
-    const waiter = outputRecordingWaitersRef.current.get(command.requestId) ?? {};
-    waiter.startResolve = resolve;
-    waiter.startReject = reject;
-    waiter.startTimer = window.setTimeout(() => {
-      outputRecordingWaitersRef.current.delete(command.requestId);
-      reject(new Error("The popout recorder did not acknowledge startup within 10 seconds."));
-    }, 10_000);
-    outputRecordingWaitersRef.current.set(command.requestId, waiter);
-    activeOutputRecordingRequestRef.current = command.requestId;
-    postToOutput({ type: "record", action: "start", ...command });
-  });
-
-  const waitForOutputRecordingResult = (requestId: string) => new Promise<Blob>((resolve, reject) => {
-    const waiter = outputRecordingWaitersRef.current.get(requestId) ?? {};
-    waiter.resultResolve = resolve;
-    waiter.resultReject = reject;
-    waiter.resultTimer = window.setTimeout(() => {
-      outputRecordingWaitersRef.current.delete(requestId);
-      reject(new Error("The popout recorder did not finish encoding within 30 seconds."));
-    }, 30_000);
-    outputRecordingWaitersRef.current.set(requestId, waiter);
-  });
-
-  const openOutputPopout = async () => {
-    if (popoutState === "active") {
-      postToOutput({ type: "focus" });
-      return;
-    }
-    if (typeof BroadcastChannel === "undefined") {
-      setDeviceError("Output popout is unavailable because this WebView does not support BroadcastChannel.");
-      return;
-    }
-    const ownerId = crypto.randomUUID?.() ?? `output-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    outputSessionRef.current = ownerId;
-    setOutputOwnerPhase("connecting");
-    outputHeartbeatRef.current = Date.now();
-    try {
-      if (isDesktopRuntime) {
-        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-        const existing = await WebviewWindow.getByLabel("output");
-        if (existing) await existing.close();
-        const output = new WebviewWindow("output", {
-            url: `?output=1&outputSession=${encodeURIComponent(ownerId)}`,
-            title: `${activeProfile.label} · GNM Studio Output`,
-            width: 1280,
-            height: 720,
-            minWidth: 480,
-            minHeight: 270,
-            resizable: true,
-            decorations: true,
-            center: true,
-          });
-          void output.once("tauri://error", (event) => {
-            setOutputOwnerPhase("failed");
-            outputSessionRef.current = "";
-            setDeviceError(`Open output popout: ${String(event.payload)}`);
-            requestAnimationFrame(() => setOutputOwnerPhase("studio"));
-          });
-      } else {
-        const url = new URL(window.location.href);
-        url.searchParams.set("output", "1");
-        url.searchParams.set("outputSession", ownerId);
-        webPopoutRef.current = window.open(url, "gnm-studio-output", "popup,width=1280,height=720,resizable=yes");
-        if (!webPopoutRef.current) throw new Error("The browser blocked the popout. Allow popups for this site and retry.");
-      }
-      window.setTimeout(() => {
-        if (outputOwnerPhaseRef.current !== "connecting" || outputSessionRef.current !== ownerId) return;
-        webPopoutRef.current?.close();
-        setOutputOwnerPhase("failed");
-        outputSessionRef.current = "";
-        setDeviceError("Output popout did not connect within 10 seconds. It was closed so the studio renderer could be restored safely.");
-        requestAnimationFrame(() => setOutputOwnerPhase("studio"));
-      }, 10_000);
-    } catch (error) {
-      setOutputOwnerPhase("failed");
-      outputSessionRef.current = "";
-      setDeviceError(`Open output popout: ${error instanceof Error ? error.message : String(error)}`);
-      requestAnimationFrame(() => setOutputOwnerPhase("studio"));
-    }
-  };
-
-  const closeOutputPopout = () => {
-    if (outputOwnerBusy(outputOwnerPhase)) {
-      pushToast({ type: "warning", title: "Output is busy", message: "Stop the recording and let the popout finish encoding before returning its renderer." });
-      return;
-    }
-    setOutputOwnerPhase("closing");
-    postToOutput({ type: "shutdown" });
-    const ownerId = outputSessionRef.current;
-    window.setTimeout(() => {
-      if (outputSessionRef.current !== ownerId || (outputOwnerPhaseRef.current !== "closing" && outputOwnerPhaseRef.current !== "restoring")) return;
-      webPopoutRef.current?.close();
-      outputSessionRef.current = "";
-      setOutputOwnerPhase("studio");
-      pushToast({ type: "warning", title: "Output handoff timed out", message: "The studio renderer was restored after the popout did not complete its shutdown acknowledgement." });
-    }, 6_000);
   };
 
   const openExternal = async (url: string) => {
@@ -872,7 +644,7 @@ function App() {
       if (popoutState === "active") {
         recordingIncludesAudio = !settings.muted;
         const requestId = crypto.randomUUID?.() ?? `record-${Date.now()}`;
-        await beginOutputRecording({
+        await output.beginRecording({
           requestId,
           fps: settings.exportFps,
           videoBitrate,
@@ -1014,8 +786,7 @@ function App() {
     const recordingMode = recordedAppearanceRef.current?.settings.recordingMode ?? settings.recordingMode;
     if (popoutState === "active" && recordingMode !== "motion") {
       setCaptureFinalizing(true);
-      const requestId = activeOutputRecordingRequestRef.current;
-      if (requestId) postToOutput({ type: "record", action: "stop", requestId });
+      output.stopRecording();
     } else if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       setCaptureFinalizing(true);
       mediaRecorderRef.current.stop();
@@ -1228,7 +999,7 @@ function App() {
         setRecordingElapsed(0);
         setLastVideoQuality(quality);
         await afterBrowserPaint();
-        await beginOutputRecording({
+        await output.beginRecording({
           requestId,
           fps: settings.exportFps,
           videoBitrate: quality.videoBitrate,
@@ -1237,7 +1008,7 @@ function App() {
           useLiveMicrophone: false,
           forceWebm,
         });
-        const completed = waitForOutputRecordingResult(requestId);
+        const completed = output.waitForRecordingResult(requestId);
         const started = performance.now();
         await new Promise<void>((resolve) => {
           const tick = (now: number) => {
@@ -1251,7 +1022,7 @@ function App() {
           };
           animation = requestAnimationFrame(tick);
         });
-        postToOutput({ type: "record", action: "stop", requestId });
+        output.stopRecording();
         const rendered = await completed;
         if (editedAudio) {
           const tracks = await inspectRecordedMedia(rendered);
@@ -1444,16 +1215,7 @@ function App() {
     const canvas = avatarCanvasRef.current;
     if (!canvas) {
       if (outputOwnerPhase === "popout-ready" || outputOwnerPhase === "popout-recording" || outputOwnerPhase === "popout-encoding") {
-        const requestId = crypto.randomUUID?.() ?? `png-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const result = new Promise<Blob>((resolve, reject) => {
-          const timer = window.setTimeout(() => {
-            outputPngWaitersRef.current.delete(requestId);
-            reject(new Error("The popout did not return the PNG within 15 seconds."));
-          }, 15_000);
-          outputPngWaitersRef.current.set(requestId, { resolve, reject, timer });
-        });
-        postToOutput({ type: "capture-png", requestId, width, height });
-        return result;
+        return output.capturePng(width, height);
       }
       if (popoutState !== "idle") throw new Error("The output renderer is currently changing owners. Wait for the handoff to finish and retry.");
       throw new Error("The rendered canvas is not ready yet.");
@@ -1816,13 +1578,13 @@ function App() {
       backgroundImageUrl: stageBackgroundImageUrl,
       viewState: stageAppearance?.viewState ?? currentViewStateRef.current,
     };
-    postToOutput({ type: "snapshot", snapshot });
-  }, [captureFinalizing, capturePaused, getCurrentTrackingFrame, motionVideoRendering, pngSequenceRendering, popoutState, recordingState, resetViewSignal, stageAppearance, stageBackgroundImageUrl, stageFrozenExpressions, stageIdentityVertices, stageManualExpressions, stageNeutralFrame, stageSettings]);
+    sendOutputSnapshot(snapshot);
+  }, [captureFinalizing, capturePaused, getCurrentTrackingFrame, motionVideoRendering, pngSequenceRendering, popoutState, recordingState, resetViewSignal, sendOutputSnapshot, stageAppearance, stageBackgroundImageUrl, stageFrozenExpressions, stageIdentityVertices, stageManualExpressions, stageNeutralFrame, stageSettings]);
 
   useEffect(() => {
     if (popoutState !== "active") return;
-    postToOutput({ type: "frame", frame: displayedFrame, trackingReady: Boolean(trackingFrame) });
-  }, [displayedFrame, popoutState, trackingFrame]);
+    sendOutputFrame(displayedFrame, Boolean(trackingFrame));
+  }, [displayedFrame, popoutState, sendOutputFrame, trackingFrame]);
 
   return (
     <>
@@ -1864,7 +1626,7 @@ function App() {
         exportBusy={videoExportProgress !== null}
         pngBusy={pngSequenceRendering}
         fullscreen={fullscreen}
-        popout={{ state: popoutState, recordingIdle: recordingState === "idle", open: () => void openOutputPopout(), close: closeOutputPopout, focus: () => postToOutput({ type: "focus" }) }}
+        popout={{ state: popoutState, recordingIdle: recordingState === "idle", open: () => void output.open(activeProfile.label), close: output.close, focus: output.focus }}
         captureStill={() => void captureStill()}
         resetView={() => setResetViewSignal((value) => value + 1)}
         toggleFullscreen={() => void toggleFullscreen()}
