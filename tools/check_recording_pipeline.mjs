@@ -94,6 +94,8 @@ const app = [
   "../src/features/tracking/useFaceTracker.ts",
   "../src/features/recording/useRecordingSession.ts",
   "../src/features/recording/usePlayback.ts",
+  "../src/features/export/useStudioExport.ts",
+  "../src/features/export/motionVideoRenderer.ts",
 ]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");

@@ -20,7 +20,9 @@ assert.equal(edited[0].blendshapes.smile, 0.25);
 assert.equal(edited.at(-1).blendshapes.smile, 0.75);
 assert.ok(edited.length >= 3);
 
-const app = readFileSync(fileURLToPath(new URL("../src/App.tsx", import.meta.url)), "utf8");
+const app = ["../src/App.tsx", "../src/features/export/useStudioExport.ts", "../src/features/export/motionVideoRenderer.ts"]
+  .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
+  .join("\n");
 for (const marker of ["editedFramesForExport()", "trimAndRetimeAudio", "exportTrimStartMs", "exportPlaybackSpeed"]) {
   assert.ok(app.includes(marker), `Non-destructive export edit path is missing ${marker}`);
 }
@@ -28,6 +30,6 @@ const offline = readFileSync(fileURLToPath(new URL("../src/lib/offlineVideoExpor
 for (const marker of ["CanvasSource", "frameIndex * duration", "hardwareAcceleration", "AudioBufferSource", "output.finalize()"] ) {
   assert.ok(offline.includes(marker), `Deterministic offline MP4 encoder is missing ${marker}`);
 }
-assert.ok(app.includes("renderRecordedMotionMp4Deterministic"));
+assert.ok(app.includes("renderRecordedMotionMp4"));
 assert.ok(app.includes("settings.exportWidth"));
 console.log("Motion editing verified: bounded trim, interpolated blendshape/XYZ/scale/quaternion samples, retimed audio, and deterministic arbitrary-resolution/FPS MP4 encoding.");

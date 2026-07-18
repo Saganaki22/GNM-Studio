@@ -14,7 +14,10 @@ assert.equal(phaseFromHeartbeat("popout-recording", "encoding"), "popout-encodin
 assert.equal(phaseFromHeartbeat("closing", "ready"), "closing");
 assert.equal(phaseFromHeartbeat("restoring", "recording"), "restoring");
 
-const app = ["../src/App.tsx", "../src/features/stage/StudioViewport.tsx", "../src/features/output/useOutputPopout.ts"]
+const app = [
+  "../src/App.tsx", "../src/features/stage/StudioViewport.tsx",
+  "../src/features/output/useOutputPopout.ts", "../src/features/export/motionVideoRenderer.ts",
+]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
 for (const marker of [

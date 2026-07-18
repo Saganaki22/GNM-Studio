@@ -165,7 +165,7 @@ assert.ok(stageSource.includes("loadGnmAnatomy()"), "GNM Stage does not load off
 const exportSource = readFileSync(fileURLToPath(new URL("../src/lib/glbExport.ts", import.meta.url)), "utf8");
 assert.ok(exportSource.includes("gnmEyeMaterials = installGnmEyeMaterials("), "GNM GLB export does not install eye materials");
 assert.ok(exportSource.includes("options.eyeColor"), "GNM GLB export does not preserve the selected eye colour");
-const appSource = ["../src/App.tsx", "../src/features/presets/usePresets.ts"]
+const appSource = ["../src/App.tsx", "../src/features/presets/usePresets.ts", "../src/features/export/useStudioExport.ts"]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
 for (const marker of ["stageSettings.eyeShaderEnabled", "stageSettings.eyeColor", "captureCurrentCanvasPng", "snapshot: OutputSnapshot", "createFullStatePreset"]) {
