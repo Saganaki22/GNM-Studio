@@ -10,11 +10,14 @@ lerna-debug.log*
 node_modules
 tools/prototype_assets/
 tools/embedded-exe-icon.png
+tiny_eye_13_add_menu_40/
 dist
 dist-ssr
 gh-pages
 release
 *.local
+__pycache__/
+*.py[cod]
 
 # Editor directories and files
 .vscode/*

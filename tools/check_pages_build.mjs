@@ -17,6 +17,7 @@ const required = [
   "sitemap.xml",
   "models/gnm_head_runtime.glb",
   "models/gnm_identity_basis.gni.gz",
+  "models/gnm_expression_basis.gne.gz",
   "models/facecap.glb",
   "models/face_landmarker.task",
   "wasm/vision_wasm_internal.wasm",

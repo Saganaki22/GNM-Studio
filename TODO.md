@@ -92,7 +92,7 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] Add a single-renderer desktop/web popout with heartbeat and automatic main-canvas restoration.
 - [x] Show an actionable **Output is in the popout** placeholder in the main viewport.
 - [x] Route recording commands to whichever window currently owns the output canvas.
-- [ ] Add regression/performance tests proving one tracker and one renderer remain active.
+- [x] Add regression/performance tests proving one tracker and one renderer remain active.
 - [ ] Validate both exported avatars in Blender, including pose, jaw, tongue, timing, and PBR materials.
 - [x] Update permissions, third-party notices, English/Chinese READMEs, CI, Pages, and portable packaging.
 - [x] Bump all manifests and portable packaging defaults to 1.1.0 at feature freeze.
@@ -154,12 +154,96 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] User-test the portable build before commit, tag, push, and release.
 - [x] Rebuild and launch-smoke both standard and UPX portable packages after documentation freeze.
 
+## Next deformation and recording-correctness pass
+
+### Fullscreen output controls
+
+- [x] Make the `H` shortcut pin controls shown or hidden so mouse movement cannot immediately undo the user's choice; reset the override only when fullscreen exits.
+- [x] Add a deterministic regression check for Auto-hide, Always clean, pinned shown, and pinned hidden states.
+
+### Current UX and performance corrections
+
+- [x] Shorten generated-identity morphing to 150 ms while retaining eased proportion changes.
+- [x] Move native GNM evaluation off the Tauri command thread and optimize contiguous identity/expression basis loops.
+- [x] Keep GNM Head v3 as the first-run default while preserving the user's last selected avatar afterward.
+- [x] Give the Export workspace a complete padded highlight instead of clipping the glow against its controls.
+- [x] Add an optional WebGPU identity/expression compute backend with parity checks and retain the worker CPU fallback for unsupported adapters. *(Broad lower-end hardware profiling remains deferred below.)*
+
+### Neutral mouth and anatomical jaw deformation
+
+- [x] Replace the low-threshold resting `jawOpen` curve with a calibrated mouth gate that combines neutral-relative MediaPipe scores, normalized inner-lip aperture, a configurable dead zone, and open/close hysteresis.
+- [x] Guarantee that a relaxed closed mouth evaluates to zero after calibration and remains closed through normal tracker noise and smoothing drift.
+- [x] Remove the duplicate mouth-opening path that currently drives both the semantic surprise target and the procedural jaw target from the same signal.
+- [x] Replace the coordinate-masked procedural jaw morph with a canonical full 383-component GNM mouth-open expression evaluated by the released deformation basis.
+- [x] Use bundled anatomical vertex groups for skin, upper/lower lips, mouth sock, tongue, gums, and upper/lower dental arches instead of inferring oral parts from position or connectivity.
+- [x] Keep the upper dental arch stationary during jaw opening and move each lower tooth/gum island coherently without per-vertex stretching.
+- [x] Add collision-safe opening limits so lower enamel cannot pass through the lower gum, lip, or chin at maximum tracked/manual input.
+- [ ] Validate neutral, half-open, and fully-open poses across multiple generated identities in desktop, web, playback, MP4, JSON, and GLB output.
+- [ ] Add numerical and visual regressions for closed-mouth neutrality, dental-arch rigidity, upper-teeth stability, lower-lip clearance, and wide-open silhouette.
+
+### Full GNM expression and identity controls
+
+- [x] Run the full 383-component expression state through the existing native Rust evaluator on desktop and an equivalent background-worker evaluator on the web.
+- [x] Build a compact quantized browser expression runtime with parity tests against Rust and the released NumPy reference.
+- [x] Load the converted local expression decoder without Python or TensorFlow at runtime and expose all 20 semantic expression classes with deterministic seed/resample controls.
+- [x] Add cached Expression A/B endpoints with a live blend slider that does not resample while dragging.
+- [x] Add weighted identity blending for the available gender and ethnicity labels, with deterministic seeds and explicit randomize controls.
+- [x] Add an advanced raw-component editor grouped by left eye, right eye, lower face, tongue, and iris, with searchable component names and per-control reset/freeze.
+- [x] Add left-to-right and right-to-left expression-region mirroring using the model's paired 100-component eye regions.
+- [x] Expose separate neck, head, left-eye, right-eye, and XYZ translation controls while retaining webcam-driven values and per-channel freeze.
+- [x] Add named full-state presets with create, load, rename, delete, import/export bundle, model-version validation, and backward-compatible JSON parsing.
+
+### Identity presentation and eyes
+
+- [x] Keep explicit **Feminine**, **Masculine**, and **Blend** GNM identity choices and verify that each sends the correct released-model conditioning vector in desktop Rust and the web worker.
+- [x] Regenerate the identity automatically after a short debounce when Presentation or Population changes, with a visible generating state; do not require an easy-to-miss second click on **Apply identity**.
+- [x] Morph smoothly between generated GNM identities so proportion changes are visible instead of snapping, while snapping during capture and reduced-motion mode.
+- [x] Add a continuous Feminine ↔ Masculine presentation-strength control so users can make the distinction stronger or subtler instead of relying only on three dropdown values.
+- [x] Preserve the same seed while comparing presentation choices so only the conditioning changes; add a side-by-side preview or comparison action.
+- [ ] Audit representative seeds and add numerical/visual regressions proving feminine, masculine, and blended output meshes are distinct and identical between desktop and web evaluators.
+- [x] Include identity presentation and strength in presets, motion appearance snapshots, JSON, GLB, popout, playback, and repeated video exports.
+- [x] Add an **Eye shader** toggle for both avatars; when disabled, restore each model's original eye materials without changing gaze tracking.
+- [x] Provide Green, Blue, Light Brown, and Dark Brown iris presets while retaining black pupils, natural sclera, corneal highlights, current pupil alignment, and tracked eye rotation.
+- [x] Keep eye settings independent from skin tone and microtexture, and reproduce them exactly in the popout, recordings, MP4 rendering, presets, screenshots, and GLB export.
+- [x] Build avatar-specific procedural masks/materials rather than stretching one model's UV coordinates onto the other, and test every style/colour in light and dark studio backgrounds.
+
+### Immutable recording appearance and popout encoding
+
+- [x] Introduce a versioned `RecordedTakeSnapshot` captured atomically when Record starts.
+- [x] Store avatar kind, identity vertices/parameters, manual/frozen expressions, neutral calibration, head-pose settings, skin toggle/tone/PBR scale/rotation/feather, background, lighting, enabled layers, mirror state, view transform, FPS, and quality settings in the take snapshot.
+- [x] Make playback, MP4 rendering, GLB export, and motion JSON use the take snapshot rather than whichever UI settings happen to be active at export time.
+- [x] Allow current UI settings to change after a take without mutating the recorded appearance; provide an explicit **Use current appearance** action when the user intentionally wants to restyle a take.
+- [x] Extend motion JSON to a new version containing the appearance snapshot while preserving import compatibility with existing version-1 files.
+- [x] Replace the popout `idle/starting/active` flags with an acknowledged output-owner state machine covering connect, ready, recording, encoding, closing, restored, and failed states.
+- [x] Keep recording and encoding on the renderer that currently owns the canvas; do not tear down the popout renderer during an active capture or offline motion render.
+- [x] Add a two-phase renderer handoff so the studio canvas is mounted only after the popout confirms recorder finalization and renderer shutdown.
+- [x] Freeze the popout's take snapshot for the entire recording and queue live appearance changes until the take has stopped.
+- [x] Add recovery for popout closure/crash during recording without flashing, duplicate renderers, lost skin textures, or an indefinitely blocked encoder.
+- [x] Add deterministic tests for popout recording, popout-to-studio handoff, retained PBR/background/view state, repeated exports, and identical desktop/web rendering state.
+
+### Header pause control and semantic device indicators
+
+- [x] Decouple camera, microphone, and GPU status-dot colours from the user-selectable accent palette.
+- [x] Give device indicators fixed semantic colours for active, paused, unavailable, and error states in both light and dark themes.
+- [x] Add a Phosphor `Pause` icon button immediately to the left of the header camera icon; replace it with Phosphor `Play` while paused.
+- [x] Suspend face inference, avatar tracking updates, microphone capture/analyser updates, and audio metering without losing the selected devices or requiring permissions again on resume.
+- [x] Freeze the avatar on the last valid pose while paused, show zero microphone level, and mark the camera/microphone indicators as paused rather than disconnected.
+- [x] Propagate pause/play state to the output popout so its avatar and recording state cannot diverge from the studio.
+- [x] Define recording behavior atomically: pausing capture also pauses the active media recorder and motion timeline, and Play resumes all of them together.
+- [x] Add accessible labels, tooltips, keyboard focus, and deterministic pause/resume tests for desktop and web builds.
+
 ## Remaining production work
 
 - [ ] Fit a high-quality 52-to-383 MediaPipe/GNM retargeting matrix from matched landmarks.
-- [ ] Add non-destructive playback trimming and interpolated retiming.
-- [ ] Add deterministic offline MP4 rendering at arbitrary resolution/FPS.
-- [ ] Add exact baked Alembic export through a statically linked Alembic writer.
-- [ ] Add transparent PNG/WebM/ProRes output modes.
-- [ ] Add code signing and automated NSIS/MSI release jobs.
-- [ ] Profile lower-end Intel/AMD/NVIDIA systems before considering optional GPU compute.
+- [x] Add non-destructive playback trimming and interpolated retiming.
+- [x] Add deterministic offline MP4 rendering at arbitrary resolution/FPS.
+- [x] Replace the center canvas with a dedicated MP4/WebM/PNG-sequence export workspace when Export is selected.
+- [x] Save numbered alpha-aware PNG sequences in a single ZIP and add an exact-canvas single-photo control.
+- [x] Add independently persisted, animated left/right sidebar collapse so the canvas expands into the released space.
+
+The following four items are explicitly deferred from the current implementation pass by user request:
+
+- [ ] Add exact baked Alembic export through a statically linked Alembic writer. *(Deferred.)*
+- [ ] Add transparent video WebM/ProRes output modes. *(Deferred; exact-canvas PNG and PNG sequences already preserve alpha.)*
+- [ ] Add code signing and automated NSIS/MSI release jobs. *(Deferred.)*
+- [ ] Profile lower-end Intel/AMD/NVIDIA systems before considering optional GPU compute. *(Deferred.)*

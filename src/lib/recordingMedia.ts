@@ -33,6 +33,15 @@ export function preferredVideoRecorderMimeType(withAudio: boolean) {
   return firstSupported(withAudio ? videoWithAudioMimeTypes : videoOnlyMimeTypes, "video/webm");
 }
 
+export function preferredWebmRecorderMimeType(withAudio: boolean) {
+  const candidates = withAudio
+    ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+    : ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  const selected = firstSupported(candidates, "");
+  if (!selected) throw new Error("This browser cannot encode WebM video through MediaRecorder.");
+  return selected;
+}
+
 export function preferredAudioRecorderMimeType() {
   return firstSupported(audioMimeTypes, "audio/webm");
 }

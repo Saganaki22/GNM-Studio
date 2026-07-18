@@ -104,3 +104,32 @@ export function identityDecoderInput(
   }
   return input;
 }
+
+/** Build the released expression-decoder input: 64 seeded latent values plus
+ * one of the 20 semantic class conditions. */
+export function expressionDecoderInput(seed: string, semanticClassIndex: number) {
+  if (!Number.isInteger(semanticClassIndex) || semanticClassIndex < 0 || semanticClassIndex >= 20) {
+    throw new Error("GNM semantic expression class must be between 0 and 19.");
+  }
+  const input = new Float32Array(84);
+  input.set(gaussianLatent(seed), 0);
+  input[64 + semanticClassIndex] = 1;
+  return input;
+}
+
+export function weightedIdentityDecoderInput(
+  seed: string,
+  presentationStrength: number,
+  populationWeights: readonly [number, number, number, number],
+) {
+  const input = new Float32Array(70);
+  input.set(gaussianLatent(seed), 0);
+  const strength = Math.min(1, Math.max(-1, presentationStrength));
+  input[64] = (1 - strength) * 0.5;
+  input[65] = (1 + strength) * 0.5;
+  const total = populationWeights.reduce((sum, value) => sum + Math.max(0, value), 0);
+  for (let index = 0; index < 4; index += 1) {
+    input[66 + index] = total > 0 ? Math.max(0, populationWeights[index]) / total : 0.25;
+  }
+  return input;
+}

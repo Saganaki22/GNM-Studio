@@ -5,20 +5,24 @@ import {
   outputChannelName,
   type MainToOutputMessage,
   type OutputSnapshot,
+  type OutputToMainEvent,
   type OutputToMainMessage,
 } from "../lib/outputChannel";
 import type { TrackingFrame } from "../types";
 import { inspectRecordedMedia } from "../lib/mediaInspection";
-import { preferredVideoRecorderMimeType } from "../lib/recordingMedia";
+import { preferredVideoRecorderMimeType, preferredWebmRecorderMimeType } from "../lib/recordingMedia";
+import { canvasPngBlob } from "../lib/canvasCapture";
 import "../App.css";
 
 const isDesktopRuntime = "__TAURI_INTERNALS__" in window;
+const ownerId = new URL(window.location.href).searchParams.get("outputSession") ?? "";
 
 export function OutputWindow() {
   const [snapshot, setSnapshot] = useState<OutputSnapshot | null>(null);
   const [frame, setFrame] = useState<TrackingFrame | null>(null);
   const [backgroundImageUrl, setBackgroundImageUrl] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [rendererMounted, setRendererMounted] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
@@ -27,10 +31,15 @@ export function OutputWindow() {
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const snapshotRef = useRef<OutputSnapshot | null>(null);
+  const recorderAudioContextRef = useRef<AudioContext | null>(null);
+  const recorderAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const activeRecordingRequestRef = useRef("");
+  const shutdownRequestedRef = useRef(false);
+  const outputPhaseRef = useRef<"ready" | "recording" | "encoding" | "closing">("ready");
 
   snapshotRef.current = snapshot;
 
-  const post = useCallback((message: OutputToMainMessage) => channelRef.current?.postMessage(message), []);
+  const post = useCallback((message: OutputToMainEvent) => channelRef.current?.postMessage({ ...message, ownerId } satisfies OutputToMainMessage), []);
   const handleCompositeCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     canvasRef.current = canvas;
   }, []);
@@ -42,7 +51,21 @@ export function OutputWindow() {
   const stopRecorderTracks = () => {
     recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
     recorderStreamRef.current = null;
+    try { recorderAudioSourceRef.current?.stop(); } catch { /* It may have ended naturally. */ }
+    recorderAudioSourceRef.current = null;
+    const audioContext = recorderAudioContextRef.current;
+    recorderAudioContextRef.current = null;
+    if (audioContext && audioContext.state !== "closed") void audioContext.close();
   };
+
+  const finishShutdown = useCallback(async () => {
+    outputPhaseRef.current = "closing";
+    setRendererMounted(false);
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    post({ type: "shutdown-ready" });
+  }, [post]);
 
   const startRecording = useCallback(async (message: Extract<MainToOutputMessage, { type: "record"; action: "start" }>) => {
     const canvas = canvasRef.current;
@@ -51,7 +74,18 @@ export function OutputWindow() {
     const stream = canvas.captureStream(message.fps);
     const currentSnapshot = snapshotRef.current;
     let expectedAudio = false;
-    if (currentSnapshot && !currentSnapshot.settings.muted && navigator.mediaDevices?.getUserMedia) {
+    if (message.retainedAudio) {
+      const audioContext = new AudioContext();
+      const audioBuffer = await audioContext.decodeAudioData(await message.retainedAudio.arrayBuffer());
+      const destination = audioContext.createMediaStreamDestination();
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(destination);
+      destination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
+      recorderAudioContextRef.current = audioContext;
+      recorderAudioSourceRef.current = source;
+      expectedAudio = stream.getAudioTracks().length > 0;
+    } else if (message.useLiveMicrophone && currentSnapshot && !currentSnapshot.settings.muted && navigator.mediaDevices?.getUserMedia) {
       try {
         const microphone = await navigator.mediaDevices.getUserMedia({
           audio: currentSnapshot.settings.microphoneId
@@ -64,7 +98,7 @@ export function OutputWindow() {
         post({ type: "error", operation: "Popout microphone", message: `${String(microphoneError)}. Video recording will continue without audio.` });
       }
     }
-    const mimeType = preferredVideoRecorderMimeType(expectedAudio);
+    const mimeType = message.forceWebm ? preferredWebmRecorderMimeType(expectedAudio) : preferredVideoRecorderMimeType(expectedAudio);
     const recorder = new MediaRecorder(stream, {
       mimeType,
       videoBitsPerSecond: message.videoBitrate,
@@ -74,6 +108,8 @@ export function OutputWindow() {
     recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
     recorder.onerror = (event) => post({ type: "error", operation: "Popout recording", message: event.type });
     recorder.onstop = async () => {
+      outputPhaseRef.current = "encoding";
+      post({ type: "record-state", requestId: message.requestId, state: "encoding" });
       if (chunksRef.current.length) {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || mimeType });
         if (expectedAudio) {
@@ -84,17 +120,29 @@ export function OutputWindow() {
             post({ type: "error", operation: "Popout recording", message: `Could not verify recorded microphone audio: ${String(inspectionError)}` });
           }
         }
-        post({ type: "record-result", blob, mimeType: blob.type });
+        post({ type: "record-result", requestId: message.requestId, blob, mimeType: blob.type });
       } else {
         post({ type: "error", operation: "Popout recording", message: "The encoder stopped without producing media data." });
       }
       stopRecorderTracks();
       recorderRef.current = null;
+      activeRecordingRequestRef.current = "";
+      if (shutdownRequestedRef.current) {
+        void finishShutdown();
+      } else {
+        outputPhaseRef.current = "ready";
+        post({ type: "record-state", requestId: message.requestId, state: "ready" });
+      }
     };
     recorderStreamRef.current = stream;
     recorderRef.current = recorder;
+    activeRecordingRequestRef.current = message.requestId;
+    if (recorderAudioContextRef.current?.state === "suspended") await recorderAudioContextRef.current.resume();
     recorder.start(250);
-  }, [post]);
+    recorderAudioSourceRef.current?.start();
+    outputPhaseRef.current = "recording";
+    post({ type: "record-state", requestId: message.requestId, state: "recording" });
+  }, [finishShutdown, post]);
 
   useEffect(() => {
     let objectUrl: string | null = null;
@@ -111,6 +159,7 @@ export function OutputWindow() {
     channelRef.current = channel;
     channel.onmessage = (event: MessageEvent<MainToOutputMessage>) => {
       const message = event.data;
+      if (!ownerId || message.ownerId !== ownerId) return;
       if (message.type === "snapshot") {
         setSnapshot(message.snapshot);
         setFrame(message.snapshot.frame);
@@ -119,9 +168,29 @@ export function OutputWindow() {
         setSnapshot((current) => current ? { ...current, trackingReady: message.trackingReady } : current);
       } else if (message.type === "record") {
         if (message.action === "start") void startRecording(message).catch((recordError) => post({ type: "error", operation: "Popout recording", message: String(recordError) }));
-        else if (message.action === "pause" && recorderRef.current?.state === "recording") recorderRef.current.pause();
-        else if (message.action === "resume" && recorderRef.current?.state === "paused") recorderRef.current.resume();
-        else if (message.action === "stop" && recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
+        else if (message.requestId !== activeRecordingRequestRef.current) return;
+        else if (message.action === "pause" && recorderRef.current?.state === "recording") {
+          recorderRef.current.pause();
+          post({ type: "record-state", requestId: message.requestId, state: "paused" });
+        } else if (message.action === "resume" && recorderRef.current?.state === "paused") {
+          recorderRef.current.resume();
+          post({ type: "record-state", requestId: message.requestId, state: "recording" });
+        } else if (message.action === "stop" && recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
+      } else if (message.type === "capture-png") {
+        const canvas = canvasRef.current;
+        if (!canvas) {
+          post({ type: "error", operation: "Popout PNG capture", message: "The popout render surface is not ready." });
+        } else {
+          void new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+            .then(() => canvasPngBlob(canvas, message.width, message.height))
+            .then((blob) => post({ type: "png-result", requestId: message.requestId, blob }))
+            .catch((captureError) => post({ type: "error", operation: "Popout PNG capture", message: String(captureError) }));
+        }
+      } else if (message.type === "shutdown") {
+        shutdownRequestedRef.current = true;
+        outputPhaseRef.current = "closing";
+        if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
+        else void finishShutdown();
       } else if (message.type === "focus") {
         if (isDesktopRuntime) void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().setFocus());
         else window.focus();
@@ -132,7 +201,7 @@ export function OutputWindow() {
       }
     };
     post({ type: "ready" });
-    const heartbeat = window.setInterval(() => post({ type: "heartbeat", timestamp: Date.now() }), 1_000);
+    const heartbeat = window.setInterval(() => post({ type: "heartbeat", timestamp: Date.now(), phase: outputPhaseRef.current }), 1_000);
     const closing = () => post({ type: "closed" });
     window.addEventListener("beforeunload", closing);
     return () => {
@@ -144,7 +213,7 @@ export function OutputWindow() {
       channel.close();
       channelRef.current = null;
     };
-  }, [post, startRecording]);
+  }, [finishShutdown, post, startRecording]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -174,6 +243,7 @@ export function OutputWindow() {
       }
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = stream;
+      stream.getVideoTracks().forEach((track) => { track.enabled = !snapshotRef.current?.capturePaused; });
       video.srcObject = stream;
       void video.play().catch((playError) => {
         const message = `Could not start the selected camera layer: ${String(playError)}`;
@@ -196,12 +266,18 @@ export function OutputWindow() {
   }, [post, snapshot?.settings.cameraFps, snapshot?.settings.cameraId, snapshot?.settings.showWebcam]);
 
   useEffect(() => {
+    cameraStreamRef.current?.getVideoTracks().forEach((track) => {
+      track.enabled = !snapshot?.capturePaused;
+    });
+  }, [snapshot?.capturePaused]);
+
+  useEffect(() => {
     const suppressContextMenu = (event: MouseEvent) => event.preventDefault();
     window.addEventListener("contextmenu", suppressContextMenu);
     return () => window.removeEventListener("contextmenu", suppressContextMenu);
   }, []);
 
-  if (!snapshot) return <main className="output-window"><div className="output-loading">Connecting to GNM Studio…</div></main>;
+  if (!snapshot || !rendererMounted) return <main className="output-window"><div className="output-loading">{rendererMounted ? "Connecting to GNM Studio…" : "Returning output to the studio…"}</div></main>;
   const settings = snapshot.settings;
   return (
     <main className="output-window">
@@ -221,9 +297,11 @@ export function OutputWindow() {
         skinTextureScale={settings.skinTextureScale}
         skinTextureRotation={settings.skinTextureRotation}
         skinTextureFeather={settings.skinTextureFeather}
+        eyeShaderEnabled={settings.eyeShaderEnabled}
+        eyeColor={settings.eyeColor}
         backgroundMode={settings.backgroundMode}
         backgroundColor={settings.backgroundColor}
-        backgroundImageUrl={backgroundImageUrl ?? snapshot.backgroundImageUrl}
+        backgroundImageUrl={snapshot.backgroundImageUrl ?? backgroundImageUrl}
         backgroundImageZoom={settings.backgroundImageZoom}
         mouseLightEnabled={settings.mouseLightEnabled}
         mouseLightIntensity={settings.mouseLightIntensity}

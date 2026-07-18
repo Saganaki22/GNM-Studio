@@ -56,12 +56,40 @@ def evaluate_decoder(
     return value
 
 
-def semantic_expressions() -> np.ndarray:
+def decode_expression_inputs(inputs: np.ndarray) -> np.ndarray:
     layers = dense_decoder(SOURCE / "expression_decoder_model.h5")
+    return evaluate_decoder(layers, inputs)
+
+
+def semantic_expressions() -> np.ndarray:
     # A zero latent code gives a stable representative for each semantic class.
     inputs = np.zeros((len(EXPRESSION_LABELS), 64 + len(EXPRESSION_LABELS)), dtype=np.float32)
     inputs[:, 64:] = np.eye(len(EXPRESSION_LABELS), dtype=np.float32)
-    return evaluate_decoder(layers, inputs)
+    parameters = decode_expression_inputs(inputs)
+    # Keep tracked brow/eye surprise independent from jaw opening. Mouth motion
+    # uses its own canonical lower-face vector below, so one MediaPipe channel
+    # can never apply two complete mouth-opening deformations at once.
+    parameters[EXPRESSION_LABELS.index("surprise"), 200:] = 0.0
+    return parameters
+
+
+def canonical_mouth_open_expression() -> np.ndarray:
+    """Return a deterministic, anatomy-native lower-face opening vector.
+
+    This is a released GNM expression-decoder sample selected offline for a
+    clear lip gap, stable upper dental arch, and bounded chin displacement.
+    Eye, tongue, and iris regions are zeroed so jaw tracking only drives the
+    model's learned lower-face basis.
+    """
+    rng = np.random.default_rng(0x474E4D)
+    latent = rng.normal(size=(303, 64)).astype(np.float32)[302]
+    inputs = np.zeros((1, 64 + len(EXPRESSION_LABELS)), dtype=np.float32)
+    inputs[0, :64] = latent
+    inputs[0, 64 + EXPRESSION_LABELS.index("surprise")] = 1.0
+    parameters = decode_expression_inputs(inputs)[0]
+    parameters[:200] = 0.0
+    parameters[350:] = 0.0
+    return parameters
 
 
 def vertex_normals(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
@@ -74,37 +102,6 @@ def vertex_normals(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
     return normals / np.maximum(lengths, 1e-8)
 
 
-def smoothstep(edge0: float, edge1: float, values: np.ndarray) -> np.ndarray:
-    amount = np.clip((values - edge0) / (edge1 - edge0), 0.0, 1.0)
-    return amount * amount * (3.0 - 2.0 * amount)
-
-
-def jaw_open_delta(vertices: np.ndarray) -> np.ndarray:
-    """Create a lower-jaw rotation morph absent from GNM's 20 semantics.
-
-    GNM's surprise class separates the lips, but it does not expose a jaw bone
-    or ARKit-style jawOpen control. This smoothly rotates only the front lower
-    face around an approximate jaw hinge. Neck, rear-skull, and upper-lip
-    vertices fade out of the deformation to avoid a visible hard boundary.
-    """
-    lower_face = smoothstep(0.0, 1.0, (0.245 - vertices[:, 1]) / 0.04)
-    exclude_neck = smoothstep(0.13, 0.175, vertices[:, 1])
-    front_face = smoothstep(0.025, 0.075, vertices[:, 2])
-    exclude_sides = 1.0 - smoothstep(0.09, 0.13, np.abs(vertices[:, 0]))
-    weights = lower_face * exclude_neck * front_face * exclude_sides
-
-    pivot = np.asarray([0.0, 0.245, 0.015], dtype=np.float32)
-    relative = vertices - pivot
-    # Sixteen degrees gives a decisive open-mouth silhouette at the top of the
-    # MediaPipe range while the smooth spatial mask protects the upper face.
-    angle = np.deg2rad(16.0)
-    cosine, sine = np.cos(angle), np.sin(angle)
-    rotated = relative.copy()
-    rotated[:, 1] = cosine * relative[:, 1] - sine * relative[:, 2]
-    rotated[:, 2] = sine * relative[:, 1] + cosine * relative[:, 2]
-    return (rotated - relative) * weights[:, None]
-
-
 def cylindrical_uv(vertices: np.ndarray) -> np.ndarray:
     """Generate stable repeatable UVs for optional skin microtexture maps."""
     center_z = (vertices[:, 2].min() + vertices[:, 2].max()) * 0.5
@@ -112,6 +109,94 @@ def cylindrical_uv(vertices: np.ndarray) -> np.ndarray:
     y_min, y_max = vertices[:, 1].min(), vertices[:, 1].max()
     v = (vertices[:, 1] - y_min) / max(float(y_max - y_min), 1e-8)
     return np.stack([u, v], axis=1).astype(np.float32)
+
+
+def connected_vertex_components(vertex_count: int, triangles: np.ndarray) -> list[np.ndarray]:
+    """Return topology islands for anatomy that is disconnected in GNM."""
+    parent = np.arange(vertex_count, dtype=np.int32)
+    sizes = np.ones(vertex_count, dtype=np.int32)
+
+    def find(value: int) -> int:
+        while parent[value] != value:
+            parent[value] = parent[parent[value]]
+            value = int(parent[value])
+        return value
+
+    def join(first: int, second: int) -> None:
+        a, b = find(first), find(second)
+        if a == b:
+            return
+        if sizes[a] < sizes[b]:
+            a, b = b, a
+        parent[b] = a
+        sizes[a] += sizes[b]
+
+    for first, second, third in triangles:
+        join(int(first), int(second))
+        join(int(second), int(third))
+    groups: dict[int, list[int]] = {}
+    for vertex in range(vertex_count):
+        groups.setdefault(find(vertex), []).append(vertex)
+    return [np.asarray(group, dtype=np.int32) for group in groups.values()]
+
+
+def stabilize_mouth_open_delta(
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+    delta: np.ndarray,
+    vertex_group_names: np.ndarray,
+    vertex_groups: np.ndarray,
+) -> np.ndarray:
+    """Strengthen learned opening with official anatomy and collision limits."""
+    source = np.asarray(delta, dtype=np.float32)
+    result = source * np.float32(1.30)
+    names = [str(name) for name in vertex_group_names]
+    def members(name: str) -> np.ndarray:
+        if name not in names:
+            raise RuntimeError(f"GNM anatomy is missing required vertex group {name}")
+        return np.flatnonzero(vertex_groups[names.index(name)] > 0.5)
+
+    upper = members("upper_teeth_and_gums")
+    lower = members("lower_teeth_and_gums")
+    chin = members("chin_region")
+    result[upper] = 0.0
+    # GNM's learned basis can deform individual tooth vertices slightly. A
+    # single anatomy-native translation prevents stretched enamel and moves
+    # the complete lower teeth/gum island farther down with the jaw.
+    lower_translation = source[lower].mean(axis=0) * np.float32(1.80)
+    # Keep a small vertical clearance above the deformed chin. This prevents
+    # the lower enamel/gum island crossing the lower lip/chin at a full 1.0
+    # jaw value while preserving a visibly wide opening.
+    chin_top = float(np.max(vertices[chin, 1] + result[chin, 1]))
+    dental_bottom = float(np.min(vertices[lower, 1]))
+    minimum_clearance = 0.0015
+    lower_translation[1] = max(
+        float(lower_translation[1]),
+        chin_top + minimum_clearance - dental_bottom,
+    )
+    result[lower] = lower_translation
+    return result
+
+
+def write_anatomy(
+    destination: Path,
+    vertex_count: int,
+    names: np.ndarray,
+    groups: np.ndarray,
+) -> None:
+    """Write compact official GNM vertex groups for browser/runtime masking."""
+    with destination.open("wb") as file:
+        file.write(b"GNA1")
+        file.write(struct.pack("<IH", vertex_count, len(names)))
+        for name, weights in zip(names, groups):
+            encoded = str(name).encode("utf-8")
+            members = np.flatnonzero(weights > 0.5).astype(np.uint16)
+            if len(encoded) > 255:
+                raise RuntimeError(f"Vertex group name is too long: {name}")
+            file.write(struct.pack("<B", len(encoded)))
+            file.write(encoded)
+            file.write(struct.pack("<I", len(members)))
+            file.write(members.tobytes())
 
 
 class GlbBuilder:
@@ -244,8 +329,18 @@ def main() -> None:
     expression_basis = np.asarray(model["expression_basis"], dtype=np.float32)
     semantic_parameters = semantic_expressions()
     semantic_deltas = np.einsum("se,evc->svc", semantic_parameters, expression_basis, optimize=True)
+    mouth_open_delta = np.einsum(
+        "e,evc->vc", canonical_mouth_open_expression(), expression_basis, optimize=True,
+    )
+    mouth_open_delta = stabilize_mouth_open_delta(
+        vertices,
+        triangles,
+        mouth_open_delta,
+        model["vertex_group_names"],
+        model["vertex_groups"],
+    )
     morph_deltas = np.concatenate(
-        [semantic_deltas, jaw_open_delta(vertices)[None, ...]],
+        [semantic_deltas, mouth_open_delta[None, ...]],
         axis=0,
     )
 
@@ -259,6 +354,12 @@ def main() -> None:
         OUTPUT / "gnm_expression_decoder.bin",
         dense_decoder(SOURCE / "expression_decoder_model.h5"),
     )
+    write_anatomy(
+        OUTPUT / "gnm_anatomy.gna",
+        len(vertices),
+        model["vertex_group_names"],
+        model["vertex_groups"],
+    )
     metadata = {
         "version": "3.0",
         "vertices": int(vertices.shape[0]),
@@ -267,6 +368,7 @@ def main() -> None:
         "expressionDimensions": int(expression_basis.shape[0]),
         "semanticExpressions": list(EXPRESSION_LABELS),
         "runtimeMorphTargets": list(RUNTIME_MORPH_LABELS),
+        "anatomicalVertexGroups": [str(name) for name in model["vertex_group_names"]],
     }
     (OUTPUT / "gnm_head_runtime.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(f"Wrote {destination} ({destination.stat().st_size / 1_000_000:.1f} MB)")

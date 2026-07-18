@@ -26,6 +26,8 @@ pub enum GnmError {
     Npz(#[from] ndarray_npy::ReadNpzError),
     #[error("{0} parameter count mismatch: expected {1}, received {2}")]
     ParameterCount(&'static str, usize, usize),
+    #[error("{0} uses an unsupported non-contiguous storage layout")]
+    StorageLayout(&'static str),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -99,39 +101,53 @@ impl GnmModel {
         check_count("rotation", info.joints, rotations.len())?;
 
         let mut vertices = self.template_vertices.clone();
+        let vertex_coordinates = info.vertices * 3;
+        let vertices_flat = vertices
+            .as_slice_mut()
+            .ok_or(GnmError::StorageLayout("template vertices"))?;
+        let identity_basis = self
+            .vertex_identity_basis
+            .as_slice()
+            .ok_or(GnmError::StorageLayout("vertex identity basis"))?;
         for (component, &weight) in identity.iter().enumerate() {
             if weight.abs() <= f32::EPSILON {
                 continue;
             }
-            for vertex in 0..info.vertices {
-                for axis in 0..3 {
-                    vertices[[vertex, axis]] +=
-                        weight * self.vertex_identity_basis[[component, vertex, axis]];
-                }
+            let basis = &identity_basis[component * vertex_coordinates..(component + 1) * vertex_coordinates];
+            for (coordinate, value) in vertices_flat.iter_mut().enumerate() {
+                *value += weight * basis[coordinate];
             }
         }
+        let expression_basis = self
+            .expression_basis
+            .as_slice()
+            .ok_or(GnmError::StorageLayout("expression basis"))?;
         for (component, &weight) in expression.iter().enumerate() {
             if weight.abs() <= f32::EPSILON {
                 continue;
             }
-            for vertex in 0..info.vertices {
-                for axis in 0..3 {
-                    vertices[[vertex, axis]] +=
-                        weight * self.expression_basis[[component, vertex, axis]];
-                }
+            let basis = &expression_basis[component * vertex_coordinates..(component + 1) * vertex_coordinates];
+            for (coordinate, value) in vertices_flat.iter_mut().enumerate() {
+                *value += weight * basis[coordinate];
             }
         }
 
         let mut joints = self.template_joints.clone();
+        let joint_coordinates = info.joints * 3;
+        let joints_flat = joints
+            .as_slice_mut()
+            .ok_or(GnmError::StorageLayout("template joints"))?;
+        let joint_identity_basis = self
+            .joint_identity_basis
+            .as_slice()
+            .ok_or(GnmError::StorageLayout("joint identity basis"))?;
         for (component, &weight) in identity.iter().enumerate() {
             if weight.abs() <= f32::EPSILON {
                 continue;
             }
-            for joint in 0..info.joints {
-                for axis in 0..3 {
-                    joints[[joint, axis]] +=
-                        weight * self.joint_identity_basis[[component, joint, axis]];
-                }
+            let basis = &joint_identity_basis[component * joint_coordinates..(component + 1) * joint_coordinates];
+            for (coordinate, value) in joints_flat.iter_mut().enumerate() {
+                *value += weight * basis[coordinate];
             }
         }
 

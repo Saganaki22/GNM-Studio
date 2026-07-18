@@ -32,6 +32,8 @@ export type TrackingFrame = {
   blendshapes: Blendshape[];
   matrix: number[];
   avatarMotion?: AvatarMotionSample;
+  /** Exact calibrated jaw channel retained for playback/export. */
+  mouthOpen?: number;
 };
 
 export type FaceAlignment = {
@@ -47,6 +49,7 @@ export type RecordedFrame = {
   blendshapes: Record<string, number>;
   matrix: number[];
   avatarMotion?: AvatarMotionSample;
+  mouthOpen?: number;
 };
 
 export type IdentityVertices = number[][] | Float32Array;
@@ -62,6 +65,9 @@ export type BackgroundMode = "studio" | "solid" | "image" | "transparent";
 export type TrackingBackend = "auto" | "gpu" | "cpu";
 export type VideoEncoderBackend = "auto" | "webcodecs" | "ffmpeg";
 export type SkinTone = "neutral" | "light" | "warm" | "medium" | "deep" | "rich";
+export type EyeColor = "green" | "blue" | "light_brown" | "dark_brown";
+export type IdentityPresentation = "female" | "male" | "blend";
+export type IdentityPopulation = "middle_eastern" | "asian" | "white" | "black" | "blend";
 
 export type SkinMaterialSettings = {
   enabled: boolean;
@@ -90,8 +96,11 @@ export type AppSettings = {
   trackingSmoothing: number;
   motionSmoothingEnabled: boolean;
   motionSmoothing: number;
+  mouthDeadZone: number;
   trackingBackend: TrackingBackend;
   exportFps: number;
+  exportWidth: number;
+  exportHeight: number;
   videoBitrateMbps: number;
   audioBitrateKbps: number;
   videoEncoderBackend: VideoEncoderBackend;
@@ -108,6 +117,8 @@ export type AppSettings = {
   skinTextureScale: number;
   skinTextureRotation: number;
   skinTextureFeather: number;
+  eyeShaderEnabled: boolean;
+  eyeColor: EyeColor;
   backgroundMode: BackgroundMode;
   backgroundColor: string;
   backgroundImageZoom: number;
@@ -124,3 +135,37 @@ export type AppSettings = {
   outputAlwaysHideControls: boolean;
   recordingMode: RecordingMode;
 };
+
+export type RecordedIdentityParameters = {
+  seed: string;
+  presentation: IdentityPresentation;
+  population: IdentityPopulation;
+  /** -1 is fully feminine, 0 is blended, and 1 is fully masculine. */
+  presentationStrength: number;
+  /** Middle Eastern, Asian, White, and Black conditioning weights. */
+  populationWeights?: [number, number, number, number];
+};
+
+export type RecordedTakeSnapshot = {
+  /** Version of the immutable in-memory appearance snapshot, independent of the motion-file version. */
+  version: 1 | 2;
+  capturedAt: string;
+  /** Immutable settings used to render this take, captured atomically when Record starts. */
+  settings: AppSettings;
+  identityVertices: IdentityVertices | null;
+  identityParameters: RecordedIdentityParameters;
+  /** Released-model coefficients retained for editable desktop/web parity. */
+  identityWeights?: Float32Array | null;
+  /** Full 383-component expression vector baked into identityVertices. */
+  gnmExpressionWeights?: Float32Array | null;
+  gnmFrozenExpressionComponents?: Record<number, number>;
+  manualExpressions: Record<string, number>;
+  frozenExpressions: Record<string, number>;
+  neutralFrame: TrackingFrame | null;
+  viewState: CameraViewState | null;
+  /** A retained object/data URL for the exact custom background used by the take. */
+  backgroundImageUrl: string | null;
+};
+
+/** @deprecated Use RecordedTakeSnapshot. Kept as a source-compatible alias for extensions. */
+export type RecordedAppearance = RecordedTakeSnapshot;

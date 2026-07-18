@@ -96,8 +96,8 @@ export const avatarProfiles: Record<AvatarKind, AvatarProfile> = {
     shortLabel: "GNM",
     asset: "models/gnm_head_runtime.glb",
     supportsIdentity: true,
-    expressionCount: semanticExpressionNames.length,
-    expressionNames: semanticExpressionNames,
+    expressionCount: semanticExpressionNames.length + 1,
+    expressionNames: [...semanticExpressionNames, "jaw_open"],
   },
   facecap: {
     kind: "facecap",

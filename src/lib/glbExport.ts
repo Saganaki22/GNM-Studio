@@ -4,7 +4,8 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { configureFacecapLoader } from "./ktx2";
 import { flattenIdentityVertices } from "./identityVertices";
 import type {
-  AvatarKind, HeadPoseSettings, IdentityVertices, RecordedFrame, SkinMaterialSettings, TrackingFrame,
+  AvatarKind, EyeColor, HeadPoseSettings, IdentityVertices, RecordedFrame, SkinMaterialSettings,
+  TrackingFrame,
 } from "../types";
 import { mouthOpenInfluence, semanticExpressionNames, semanticInfluences } from "./retarget";
 import { assetUrl } from "./assets";
@@ -14,6 +15,7 @@ import {
   createFacecapMouthMaterials, normalizeFacecapSkinUvs, splitFacecapMouthMaterials,
 } from "./facecapModel";
 import { disposeGnmEyeMaterials, installGnmEyeMaterials, type GnmEyeMaterialSet } from "./gnmEyes";
+import { loadGnmAnatomy } from "./gnmAnatomy";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   skinDisplacementScale,
@@ -27,6 +29,8 @@ export type AnimatedGlbOptions = {
   neutralFrame?: TrackingFrame | null;
   mirror?: boolean;
   headPose?: HeadPoseSettings;
+  eyeShaderEnabled?: boolean;
+  eyeColor?: EyeColor;
 };
 
 async function loadAvatarSource(source: ArrayBuffer, avatarKind: AvatarKind) {
@@ -119,7 +123,15 @@ export async function createAnimatedGlb(
     const upperTeeth = gltf.scene.getObjectByName("mesh_3") ?? gltf.scene.getObjectByName("teeth");
     if (upperTeeth instanceof THREE.Mesh) upperTeeth.material = mouthMaterials.teeth;
   } else {
-    gnmEyeMaterials = installGnmEyeMaterials(mesh, material);
+    const anatomy = await loadGnmAnatomy();
+    gnmEyeMaterials = installGnmEyeMaterials(
+      mesh,
+      material,
+      1,
+      options.eyeShaderEnabled ?? true,
+      options.eyeColor ?? "green",
+      anatomy,
+    );
   }
 
   const performanceRoot = new THREE.Group();
@@ -146,9 +158,9 @@ export async function createAnimatedGlb(
         frozenExpressions[name] ?? Math.min(1, semantic[name] + (manualExpressions[name] ?? 0));
     });
     values[frameIndex * morphNames.length + semanticExpressionNames.length] =
-      frozenExpressions.surprise ?? Math.min(
+      frozenExpressions.jaw_open ?? Math.min(
         1,
-        mouthOpenInfluence(frame.blendshapes) + (manualExpressions.surprise ?? 0),
+        (frame.mouthOpen ?? mouthOpenInfluence(frame.blendshapes)) + (manualExpressions.jaw_open ?? 0),
       );
   });
 
@@ -161,6 +173,20 @@ export async function createAnimatedGlb(
     ),
   ];
   const quaternionValues = new Float32Array(frames.length * 4);
+  const jointValue = (name: string) => frozenExpressions[name] ?? manualExpressions[name] ?? 0;
+  const jointLimit = THREE.MathUtils.degToRad(30);
+  const neckOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    jointValue("joint_neck_pitch") * jointLimit,
+    jointValue("joint_neck_yaw") * jointLimit,
+    jointValue("joint_neck_roll") * jointLimit,
+    "YXZ",
+  ));
+  const headOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    jointValue("joint_head_pitch") * jointLimit,
+    jointValue("joint_head_yaw") * jointLimit,
+    jointValue("joint_head_roll") * jointLimit,
+    "YXZ",
+  ));
   let previousQuaternion: THREE.Quaternion | null = null;
   frames.forEach((frame, index) => {
     const trackingFrame: TrackingFrame = {
@@ -178,7 +204,8 @@ export async function createAnimatedGlb(
         options.headPose ?? defaultHeadPose,
         previousQuaternion,
       );
-    previousQuaternion = quaternion;
+    previousQuaternion = quaternion.clone();
+    quaternion.multiply(neckOffset).multiply(headOffset).normalize();
     quaternion.toArray(quaternionValues, index * 4);
   });
   tracks.push(new THREE.QuaternionKeyframeTrack("GNM_Studio_Performance.quaternion", times, quaternionValues));
@@ -191,7 +218,11 @@ export async function createAnimatedGlb(
     const exportedPosition = options.neutralFrame
       ? position
       : position.map((value, axis) => value - firstPosition[axis]);
-    positionValues.set(exportedPosition, index * 3);
+    positionValues.set([
+      exportedPosition[0] + jointValue("joint_translate_x") * 0.65,
+      exportedPosition[1] + jointValue("joint_translate_y") * 0.65,
+      exportedPosition[2] + jointValue("joint_translate_z") * 0.65,
+    ], index * 3);
     const fallbackScale = frame.avatarMotion ? frame.avatarMotion.faceHeight / firstFaceHeight : 1;
     const scale = options.neutralFrame && frame.avatarMotion?.scale
       ? frame.avatarMotion.scale

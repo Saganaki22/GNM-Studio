@@ -71,15 +71,19 @@ fn gnm_model_info() -> Result<GnmModelInfo, String> {
 }
 
 #[tauri::command]
-fn gnm_evaluate(
+async fn gnm_evaluate(
     identity: Vec<f32>,
     expression: Vec<f32>,
     rotations: Vec<[f32; 3]>,
     translation: [f32; 3],
 ) -> Result<Vec<[f32; 3]>, String> {
-    runtime_model()?
-        .evaluate(&identity, &expression, &rotations, translation)
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime_model()?
+            .evaluate(&identity, &expression, &rotations, translation)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("GNM evaluation worker stopped: {error}"))?
 }
 
 #[tauri::command]

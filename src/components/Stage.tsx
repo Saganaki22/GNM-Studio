@@ -9,14 +9,17 @@ import { resolveHeadPose } from "../lib/headPose";
 import {
   createFacecapMouthMaterials, normalizeFacecapSkinUvs, splitFacecapMouthMaterials,
 } from "../lib/facecapModel";
-import { installFacecapPupils } from "../lib/facecapEyes";
+import { installFacecapPupils, updateFacecapPupils, type FacecapEyeMaterialSet } from "../lib/facecapEyes";
 import {
-  disposeGnmEyeMaterials, gnmEyeTextureOffset, installGnmEyeMaterials, type GnmEyeMaterialSet,
+  disposeGnmEyeMaterials, gnmEyeTextureOffset, installGnmEyeMaterials, updateGnmEyeMaterials,
+  type GnmEyeMaterialSet,
 } from "../lib/gnmEyes";
 import { configureFacecapLoader } from "../lib/ktx2";
 import { flattenIdentityVertices } from "../lib/identityVertices";
+import { identityTransitionProgress, interpolateIdentityPositions } from "../lib/identityTransition";
 import { projectCoverPoint } from "../lib/coverProjection";
 import { neutralRelativeMatrixPosition } from "../lib/avatarMotion";
+import { loadGnmAnatomy, type GnmAnatomy } from "../lib/gnmAnatomy";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   skinDisplacementScale,
@@ -24,7 +27,7 @@ import {
 } from "../lib/skinMaterial";
 import type {
   AvatarKind, AvatarMotionSample, BackgroundMode, CameraViewState, FaceAlignment,
-  HeadPoseSettings, IdentityVertices, RecordingMode, SkinTone, TrackingFrame,
+  EyeColor, HeadPoseSettings, IdentityVertices, RecordingMode, SkinTone, TrackingFrame,
 } from "../types";
 
 type Props = {
@@ -43,6 +46,8 @@ type Props = {
   skinTextureScale: number;
   skinTextureRotation: number;
   skinTextureFeather: number;
+  eyeShaderEnabled: boolean;
+  eyeColor: EyeColor;
   backgroundMode: BackgroundMode;
   backgroundColor: string;
   backgroundImageUrl: string | null;
@@ -107,6 +112,8 @@ export function Stage({
   skinTextureScale,
   skinTextureRotation,
   skinTextureFeather,
+  eyeShaderEnabled,
+  eyeColor,
   backgroundMode,
   backgroundColor,
   backgroundImageUrl,
@@ -156,6 +163,8 @@ export function Stage({
   const eyeLRef = useRef<THREE.Object3D | null>(null);
   const eyeRRef = useRef<THREE.Object3D | null>(null);
   const gnmEyeMaterialsRef = useRef<GnmEyeMaterialSet | null>(null);
+  const facecapEyeMaterialsRef = useRef<FacecapEyeMaterialSet | null>(null);
+  const identityTransitionFrameRef = useRef<number | null>(null);
   const viewStateOverrideRef = useRef(viewStateOverride);
   const onViewStateChangeRef = useRef(onViewStateChange);
   const onAvatarMotionRef = useRef(onAvatarMotion);
@@ -351,7 +360,7 @@ export function Stage({
 
     const loader = new GLTFLoader();
     const ktx2Loader = avatarKind === "facecap" ? configureFacecapLoader(loader, renderer) : null;
-    const installModel = (gltf: Awaited<ReturnType<GLTFLoader["loadAsync"]>>) => {
+    const installModel = (gltf: Awaited<ReturnType<GLTFLoader["loadAsync"]>>, anatomy: GnmAnatomy | null) => {
       // FaceCap's head, teeth and eyes are sibling scene nodes. GNM ships
       // beneath one root node, so preserve its existing hierarchy there.
       const model = avatarKind === "facecap" ? gltf.scene : gltf.scene.children[0] ?? gltf.scene;
@@ -378,7 +387,7 @@ export function Stage({
         if (avatarKind === "facecap" && facecapMouthMaterials) {
           splitFacecapMouthMaterials(face, material, facecapMouthMaterials);
         } else {
-          gnmEyeMaterialsRef.current = installGnmEyeMaterials(face, material, opacityRef.current);
+          gnmEyeMaterialsRef.current = installGnmEyeMaterials(face, material, opacityRef.current, true, "green", anatomy);
         }
         faceRef.current = face;
       }
@@ -390,7 +399,7 @@ export function Stage({
       }
       eyeLRef.current = model.getObjectByName("eyeLeft") ?? null;
       eyeRRef.current = model.getObjectByName("eyeRight") ?? null;
-      if (avatarKind === "facecap") installFacecapPupils(model);
+      if (avatarKind === "facecap") facecapEyeMaterialsRef.current = installFacecapPupils(model);
 
       const bounds = new THREE.Box3().setFromObject(model);
       const size = bounds.getSize(new THREE.Vector3());
@@ -404,11 +413,14 @@ export function Stage({
       scene.add(trackingRoot);
       setModelReady(true);
     };
-    loader.load(
-      assetUrl(avatarProfiles[avatarKind].asset),
-      installModel,
-      undefined,
-      (error) => onStageError(`Avatar model: Could not load ${avatarProfiles[avatarKind].label}: ${String(error)}`),
+    let stageDisposed = false;
+    Promise.all([
+      loader.loadAsync(assetUrl(avatarProfiles[avatarKind].asset)),
+      avatarKind === "gnm" ? loadGnmAnatomy() : Promise.resolve(null),
+    ]).then(([gltf, anatomy]) => {
+      if (!stageDisposed) installModel(gltf, anatomy);
+    }).catch(
+      (error) => { if (!stageDisposed) onStageError(`Avatar model: Could not load ${avatarProfiles[avatarKind].label}: ${String(error)}`); },
     );
 
     let animationId = 0;
@@ -478,6 +490,7 @@ export function Stage({
     render();
 
     return () => {
+      stageDisposed = true;
       cancelAnimationFrame(animationId);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerdown", chooseLeftGesture, true);
@@ -496,6 +509,7 @@ export function Stage({
       });
       disposeGnmEyeMaterials(gnmEyeMaterialsRef.current);
       gnmEyeMaterialsRef.current = null;
+      facecapEyeMaterialsRef.current = null;
       faceRef.current = null;
       skinMaterialRef.current = null;
       eyeLRef.current = null;
@@ -506,6 +520,11 @@ export function Stage({
       onCompositeCanvas(null);
     };
   }, [avatarKind, onCompositeCanvas, onStageError, onViewportResize, videoRef]);
+
+  useEffect(() => {
+    updateGnmEyeMaterials(gnmEyeMaterialsRef.current, eyeShaderEnabled, eyeColor);
+    updateFacecapPupils(facecapEyeMaterialsRef.current, eyeShaderEnabled, eyeColor);
+  }, [eyeColor, eyeShaderEnabled, modelReady]);
 
   useEffect(() => {
     const face = faceRef.current;
@@ -622,11 +641,54 @@ export function Stage({
     const face = faceRef.current;
     if (avatarKind !== "gnm" || !face || !identityVertices?.length) return;
     const geometry = face.geometry as THREE.BufferGeometry;
-    const flattened = flattenIdentityVertices(identityVertices);
-    geometry.setAttribute("position", new THREE.BufferAttribute(flattened, 3));
-    geometry.computeVertexNormals();
-    geometry.computeBoundingSphere();
-  }, [avatarKind, identityVertices, modelReady]);
+    const target = new Float32Array(flattenIdentityVertices(identityVertices));
+    const position = geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+    if (!position || position.array.length !== target.length) {
+      geometry.setAttribute("position", new THREE.BufferAttribute(target, 3));
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      return;
+    }
+
+    if (identityTransitionFrameRef.current !== null) {
+      cancelAnimationFrame(identityTransitionFrameRef.current);
+      identityTransitionFrameRef.current = null;
+    }
+    const output = position.array instanceof Float32Array
+      ? position.array
+      : new Float32Array(position.array as ArrayLike<number>);
+    if (output !== position.array) geometry.setAttribute("position", new THREE.BufferAttribute(output, 3));
+    const from = new Float32Array(output);
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (reducedMotion || recordingActive) {
+      output.set(target);
+      geometry.getAttribute("position").needsUpdate = true;
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      return;
+    }
+
+    const started = performance.now();
+    const animate = (now: number) => {
+      const progress = identityTransitionProgress(now - started);
+      interpolateIdentityPositions(from, target, progress, output);
+      geometry.getAttribute("position").needsUpdate = true;
+      geometry.computeVertexNormals();
+      if (progress < 1) {
+        identityTransitionFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        geometry.computeBoundingSphere();
+        identityTransitionFrameRef.current = null;
+      }
+    };
+    identityTransitionFrameRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (identityTransitionFrameRef.current !== null) {
+        cancelAnimationFrame(identityTransitionFrameRef.current);
+        identityTransitionFrameRef.current = null;
+      }
+    };
+  }, [avatarKind, identityVertices, modelReady, recordingActive]);
 
   useEffect(() => {
     if (rendererCanvasRef.current) {
@@ -655,6 +717,8 @@ export function Stage({
     const root = rootRef.current;
     const face = faceRef.current;
     if (!root || !face) return;
+
+    const jointValue = (name: string) => frozenExpressions[name] ?? manualExpressions[name] ?? 0;
 
     if (frame?.avatarMotion) {
       const host = hostRef.current;
@@ -703,7 +767,29 @@ export function Stage({
         },
         frame.timestamp,
       );
+    } else {
+      root.position.set(0, 0, 0);
+      root.scale.setScalar(1);
+      root.quaternion.identity();
     }
+
+    const jointLimit = THREE.MathUtils.degToRad(30);
+    const neckOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      jointValue("joint_neck_pitch") * jointLimit,
+      jointValue("joint_neck_yaw") * jointLimit,
+      jointValue("joint_neck_roll") * jointLimit,
+      "YXZ",
+    ));
+    const headOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      jointValue("joint_head_pitch") * jointLimit,
+      jointValue("joint_head_yaw") * jointLimit,
+      jointValue("joint_head_roll") * jointLimit,
+      "YXZ",
+    ));
+    root.quaternion.multiply(neckOffset).multiply(headOffset).normalize();
+    root.position.x += jointValue("joint_translate_x") * 0.65;
+    root.position.y += jointValue("joint_translate_y") * 0.65;
+    root.position.z += jointValue("joint_translate_z") * 0.65;
 
     const eye = { lH: 0, rH: 0, lV: 0, rV: 0 };
     const blendshapes = frame?.blendshapes ?? [];
@@ -718,6 +804,10 @@ export function Stage({
       if (name === "eyeLookUpRight") eye.rV -= score;
       if (name === "eyeLookDownRight") eye.rV += score;
     }
+    eye.lH += jointValue("joint_left_eye_yaw");
+    eye.lV += jointValue("joint_left_eye_pitch");
+    eye.rH += jointValue("joint_right_eye_yaw");
+    eye.rV += jointValue("joint_right_eye_pitch");
     const modelInfluences = avatarKind === "facecap"
       ? facecapInfluences(scoreLookup)
       : semanticInfluences(scoreLookup);
@@ -732,9 +822,9 @@ export function Stage({
     }
     const jawOpenIndex = avatarKind === "gnm" ? face.morphTargetDictionary?.jaw_open : undefined;
     if (jawOpenIndex !== undefined && face.morphTargetInfluences) {
-      face.morphTargetInfluences[jawOpenIndex] = frozenExpressions.surprise ?? Math.min(
+      face.morphTargetInfluences[jawOpenIndex] = frozenExpressions.jaw_open ?? Math.min(
         1,
-        mouthOpenInfluence(scoreLookup) + (manualExpressions.surprise ?? 0),
+        (frame?.mouthOpen ?? mouthOpenInfluence(scoreLookup, frame?.landmarks)) + (manualExpressions.jaw_open ?? 0),
       );
     }
     const limit = THREE.MathUtils.degToRad(28);
