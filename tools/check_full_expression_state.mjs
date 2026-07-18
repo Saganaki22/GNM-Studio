@@ -25,12 +25,12 @@ assert.equal(leftToRight[102], a[2]);
 assert.equal(leftToRight[107], a[7]);
 assert.equal(applyFrozenGnmExpressionComponents(midpoint, { 2: -0.75 })[2], -0.75);
 
-const app = ["../src/App.tsx", "../src/features/expression/ExpressionPanel.tsx"]
+const app = ["../src/App.tsx", "../src/features/expression/ExpressionPanel.tsx", "../src/features/gnm/useGnmRuntime.ts"]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
 for (const marker of [
   "models/gnm_expression_decoder.bin",
-  "evaluateGnmParameters(identityWeights, gnmExpressionWeights)",
+  "evaluateParameters(identityWeights, gnmExpressionWeights)",
   "<GnmExpressionEditor",
   "gnmFrozenExpressionComponents",
   "evaluateExpression(identity, expression)",

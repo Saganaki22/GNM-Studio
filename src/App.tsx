@@ -11,8 +11,10 @@ import { StudioViewport } from "./features/stage/StudioViewport";
 import { DeviceAccessPrompt } from "./features/devices/DeviceAccessPrompt";
 import { ExpressionPanel } from "./features/expression/ExpressionPanel";
 import { useFullscreenControls } from "./features/fullscreen/useFullscreenControls";
+import { useGnmRuntime } from "./features/gnm/useGnmRuntime";
 import { IdentityPanel } from "./features/identity/IdentityPanel";
 import { PresetPanel } from "./features/presets/PresetPanel";
+import { usePresets } from "./features/presets/usePresets";
 import { TransportDock } from "./features/recording/TransportDock";
 import { LeftSidebar } from "./features/shell/LeftSidebar";
 import { StudioFileInputs } from "./features/shell/StudioFileInputs";
@@ -22,17 +24,13 @@ import { useToasts } from "./features/toasts/useToasts";
 import { ToastCenter } from "./components/ToastCenter";
 import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
 import { createAnimatedGlb } from "./lib/glbExport";
-import { DenseDecoder, expressionDecoderInput, weightedIdentityDecoderInput } from "./lib/decoder";
-import { identityVertexCount } from "./lib/identityVertices";
-import type { WebIdentityEvaluator } from "./lib/webIdentity";
 import { avatarProfiles, facecapInfluences } from "./lib/avatarProfiles";
 import {
   outputChannelName, type MainToOutputCommand, type MainToOutputMessage, type OutputOwnerPhase, type OutputSnapshot, type OutputToMainMessage,
 } from "./lib/outputChannel";
 import { parseMotionFile } from "./lib/motionFile";
-import { MouthOpenGate, mouthOpenInfluence, semanticExpressionNames, semanticInfluences } from "./lib/retarget";
+import { MouthOpenGate, mouthOpenInfluence, semanticInfluences } from "./lib/retarget";
 import { AdaptiveTrackingSmoother } from "./lib/trackingSmoothing";
-import { assetUrl } from "./lib/assets";
 import type { ViewportSize } from "./lib/coverProjection";
 import { assessFaceAlignment } from "./lib/faceAlignment";
 import { inspectRecordedMedia } from "./lib/mediaInspection";
@@ -44,16 +42,11 @@ import {
 } from "./lib/recordingAppearance";
 import type {
   AppSettings, AvatarMotionSample, CameraViewState, DeviceOption, FaceAlignment,
-  IdentityVertices, RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
+  RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
 } from "./types";
 import { canvasPngBlob } from "./lib/canvasCapture";
 import { createStoredZip } from "./lib/zipStore";
 import { canMountStudioRenderer, outputOwnerBusy, phaseFromHeartbeat } from "./lib/outputOwner";
-import { applyFrozenGnmExpressionComponents, blendGnmExpressions, mirrorGnmEyeRegion } from "./lib/gnmExpressions";
-import {
-  createFullStatePreset, loadStoredPresets, parseFullStatePresetBundle, saveStoredPresets, serializePresetBundle,
-  type FullStatePreset,
-} from "./lib/presets";
 import { trimAndRetimeMotion } from "./lib/motionEdit";
 import { afterBrowserPaint, formatTime, timestampedFilename } from "./lib/studioFormat";
 import { applyNeutralBaseline, estimateTrackingQuality, playbackTrackingFrame, recordedFrameAtTime } from "./lib/trackingFrames";
@@ -62,31 +55,6 @@ import "./App.css";
 
 function App() {
   const [gnmInfo, setGnmInfo] = useState<{ vertices: number; identityDimensions: number; expressionDimensions: number } | null>(null);
-  const [identitySeed, setIdentitySeed] = useState("GNM-2048");
-  const [identityGender, setIdentityGender] = useState<"female" | "male" | "blend">("blend");
-  const [identityEthnicity, setIdentityEthnicity] = useState<"middle_eastern" | "asian" | "white" | "black" | "blend">("blend");
-  const [identityPresentationStrength, setIdentityPresentationStrength] = useState(0);
-  const [identityPopulationWeights, setIdentityPopulationWeights] = useState<[number, number, number, number]>([0.25, 0.25, 0.25, 0.25]);
-  const [identityVertices, setIdentityVertices] = useState<IdentityVertices | null>(null);
-  const [identityStatus, setIdentityStatus] = useState<"ready" | "generating" | "error">("ready");
-  const [webIdentityBackend, setWebIdentityBackend] = useState<"detecting" | "webgpu" | "cpu">("detecting");
-  const [identityDecoderReady, setIdentityDecoderReady] = useState(false);
-  const [identityWeights, setIdentityWeights] = useState<Float32Array | null>(null);
-  const [expressionDecoderReady, setExpressionDecoderReady] = useState(false);
-  const [gnmExpressionStatus, setGnmExpressionStatus] = useState<"ready" | "evaluating" | "error">("ready");
-  const [gnmExpressionWeights, setGnmExpressionWeights] = useState<Float32Array>(() => new Float32Array(383));
-  const [gnmFrozenExpressionComponents, setGnmFrozenExpressionComponents] = useState<Record<number, number>>({});
-  const [gnmExpressionA, setGnmExpressionA] = useState("surprise");
-  const [gnmExpressionB, setGnmExpressionB] = useState("happy");
-  const [gnmExpressionSeedA, setGnmExpressionSeedA] = useState("GNM-EXP-A");
-  const [gnmExpressionSeedB, setGnmExpressionSeedB] = useState("GNM-EXP-B");
-  const [gnmExpressionBlend, setGnmExpressionBlend] = useState(0);
-  const [gnmExpressionAbActive, setGnmExpressionAbActive] = useState(false);
-  const [gnmExpressionEndpointA, setGnmExpressionEndpointA] = useState<Float32Array>(() => new Float32Array(383));
-  const [gnmExpressionEndpointB, setGnmExpressionEndpointB] = useState<Float32Array>(() => new Float32Array(383));
-  const [fullStatePresets, setFullStatePresets] = useState<FullStatePreset[]>(loadStoredPresets);
-  const [selectedPresetId, setSelectedPresetId] = useState("");
-  const [presetName, setPresetName] = useState("My GNM look");
   const [manualExpressions, setManualExpressions] = useState<Record<string, number>>({});
   const [frozenExpressions, setFrozenExpressions] = useState<Record<string, number>>({});
   const [resetViewSignal, setResetViewSignal] = useState(0);
@@ -151,6 +119,23 @@ function App() {
   const [trackerRestartKey, setTrackerRestartKey] = useState(0);
   const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const { toasts, pushToast, dismissToast } = useToasts();
+  const { identity, expression, restoreState: restoreGnmState } = useGnmRuntime({
+    avatarKind: settings.avatarKind,
+    recordingIdle: recordingState === "idle",
+    onToast: pushToast,
+    onError: setDeviceError,
+  });
+  const {
+    seed: identitySeed, presentation: identityGender, population: identityEthnicity,
+    presentationStrength: identityPresentationStrength, populationWeights: identityPopulationWeights,
+    vertices: identityVertices, weights: identityWeights, status: identityStatus,
+    webBackend: webIdentityBackend,
+  } = identity;
+  const {
+    ready: expressionDecoderReady, status: gnmExpressionStatus, weights: gnmExpressionWeights,
+    frozen: gnmFrozenExpressionComponents, semanticA: gnmExpressionA, semanticB: gnmExpressionB,
+    seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend,
+  } = expression;
   const [stageSize, setStageSize] = useState<ViewportSize>({ width: 640, height: 480 });
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceAlignment = useMemo(
@@ -228,13 +213,6 @@ function App() {
   const neutralFrameRef = useRef<TrackingFrame | null>(neutralFrame);
   const mouthDeadZoneRef = useRef(settings.mouthDeadZone);
   const calibrationSessionRef = useRef(0);
-  const identityDecoderRef = useRef<DenseDecoder | null>(null);
-  const expressionDecoderRef = useRef<DenseDecoder | null>(null);
-  const identityWeightsRef = useRef<Float32Array | null>(null);
-  const identityEvaluationSkipRef = useRef<Float32Array | null>(null);
-  const gnmExpressionWeightsRef = useRef(gnmExpressionWeights);
-  const identityGenerationRef = useRef(0);
-  const webIdentityEvaluatorRef = useRef<WebIdentityEvaluator | null>(null);
 
   mutedRef.current = settings.muted;
   capturePausedRef.current = capturePaused;
@@ -245,8 +223,6 @@ function App() {
   motionSmoothingRef.current = settings.motionSmoothingEnabled ? settings.motionSmoothing : 0;
   neutralFrameRef.current = neutralFrame;
   mouthDeadZoneRef.current = settings.mouthDeadZone;
-  identityWeightsRef.current = identityWeights;
-  gnmExpressionWeightsRef.current = gnmExpressionWeights;
   outputOwnerPhaseRef.current = outputOwnerPhase;
 
   const storeAvatarMotion = useCallback((sample: AvatarMotionSample, frameTimestamp: number) => {
@@ -406,14 +382,6 @@ function App() {
   }, [settings.ffmpegPath, settings.videoEncoderBackend]);
 
   useEffect(() => {
-    try {
-      saveStoredPresets(fullStatePresets);
-    } catch (error) {
-      setDeviceError(`Preset storage: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [fullStatePresets]);
-
-  useEffect(() => {
     const duration = recordedFrames.at(-1)?.timestamp ?? 0;
     setExportTrimStartMs(0);
     setExportTrimEndMs(duration);
@@ -462,340 +430,6 @@ function App() {
       .catch((error) => setDeviceError(`App manifest version: ${String(error)}`));
   }, []);
 
-  useEffect(() => {
-    let disposed = false;
-    Promise.all([
-      DenseDecoder.load(assetUrl("models/gnm_identity_decoder.bin")),
-      DenseDecoder.load(assetUrl("models/gnm_expression_decoder.bin")),
-    ])
-      .then(([identityDecoder, expressionDecoder]) => {
-        if (disposed) return;
-        identityDecoderRef.current = identityDecoder;
-        expressionDecoderRef.current = expressionDecoder;
-        setIdentityDecoderReady(true);
-        setExpressionDecoderReady(true);
-      })
-      .catch((error) => setDeviceError(`GNM decoder: ${String(error)}`));
-    return () => {
-      disposed = true;
-      webIdentityEvaluatorRef.current?.dispose();
-      webIdentityEvaluatorRef.current = null;
-    };
-  }, []);
-
-  const evaluateGnmParameters = useCallback(async (identity: Float32Array, expression: Float32Array) => {
-    if (isDesktopRuntime) {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const positions = await invoke<number[][]>("gnm_evaluate", {
-        identity: Array.from(identity),
-        expression: Array.from(expression),
-        rotations: new Array(4).fill(null).map(() => [0, 0, 0]),
-        translation: [0, 0, 0],
-      });
-      return { positions: positions as IdentityVertices, backend: "native Rust" };
-    }
-    if (!webIdentityEvaluatorRef.current) {
-      const { WebIdentityEvaluator } = await import("./lib/webIdentity");
-      webIdentityEvaluatorRef.current = new WebIdentityEvaluator();
-    }
-    const evaluation = await webIdentityEvaluatorRef.current.evaluateExpression(identity, expression);
-    setWebIdentityBackend(evaluation.backend);
-    return {
-      positions: evaluation.positions as IdentityVertices,
-      backend: evaluation.backend === "webgpu" ? "worker WebGPU" : "worker CPU",
-    };
-  }, []);
-
-  const generateIdentity = useCallback(async (
-    seed = identitySeed,
-    presentationStrength = identityPresentationStrength,
-    populationWeights = identityPopulationWeights,
-    announce = true,
-  ) => {
-    if (!identityDecoderRef.current) {
-      setDeviceError("Identity generation: the local identity decoder is still loading. Wait a moment and retry.");
-      return;
-    }
-    const request = ++identityGenerationRef.current;
-    setIdentityStatus("generating");
-    try {
-      const identity = identityDecoderRef.current.evaluate(
-        weightedIdentityDecoderInput(seed, presentationStrength, populationWeights),
-      );
-      identityWeightsRef.current = identity;
-      identityEvaluationSkipRef.current = identity;
-      setIdentityWeights(identity);
-      const evaluation = await evaluateGnmParameters(identity, gnmExpressionWeightsRef.current);
-      if (request !== identityGenerationRef.current) return;
-      setIdentityVertices(evaluation.positions);
-      setIdentityStatus("ready");
-      if (announce) {
-        pushToast({
-          type: "success",
-          title: "Identity generated",
-          message: `GNM rebuilt ${identityVertexCount(evaluation.positions).toLocaleString()} vertices from seed ${seed} with ${evaluation.backend}.`,
-        });
-      }
-    } catch (error) {
-      if (request !== identityGenerationRef.current) return;
-      setIdentityStatus("error");
-      setDeviceError(`Identity generation: ${String(error)}`);
-    }
-  }, [evaluateGnmParameters, identityPopulationWeights, identityPresentationStrength, identitySeed, pushToast]);
-
-  useEffect(() => {
-    if (!identityDecoderReady || settings.avatarKind !== "gnm" || recordingState !== "idle") return;
-    const timer = window.setTimeout(() => {
-      void generateIdentity(identitySeed, identityPresentationStrength, identityPopulationWeights, false);
-    }, 220);
-    return () => window.clearTimeout(timer);
-  }, [generateIdentity, identityDecoderReady, identityEthnicity, identityGender, identityPopulationWeights, identityPresentationStrength, identitySeed, recordingState, settings.avatarKind]);
-
-  useEffect(() => {
-    if (!expressionDecoderReady || !expressionDecoderRef.current) return;
-    const timer = window.setTimeout(() => {
-      try {
-        const indexA = semanticExpressionNames.findIndex((name) => name === gnmExpressionA);
-        const indexB = semanticExpressionNames.findIndex((name) => name === gnmExpressionB);
-        setGnmExpressionEndpointA(expressionDecoderRef.current!.evaluate(expressionDecoderInput(gnmExpressionSeedA, indexA)));
-        setGnmExpressionEndpointB(expressionDecoderRef.current!.evaluate(expressionDecoderInput(gnmExpressionSeedB, indexB)));
-      } catch (error) {
-        setGnmExpressionStatus("error");
-        setDeviceError(`Expression decoder: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }, 120);
-    return () => window.clearTimeout(timer);
-  }, [expressionDecoderReady, gnmExpressionA, gnmExpressionB, gnmExpressionSeedA, gnmExpressionSeedB]);
-
-  useEffect(() => {
-    if (!expressionDecoderReady || !gnmExpressionAbActive) return;
-    setGnmExpressionWeights(applyFrozenGnmExpressionComponents(
-      blendGnmExpressions(gnmExpressionEndpointA, gnmExpressionEndpointB, gnmExpressionBlend),
-      gnmFrozenExpressionComponents,
-    ));
-  }, [expressionDecoderReady, gnmExpressionAbActive, gnmExpressionBlend, gnmExpressionEndpointA, gnmExpressionEndpointB, gnmFrozenExpressionComponents]);
-
-  useEffect(() => {
-    if (!identityWeights || settings.avatarKind !== "gnm") return;
-    if (identityEvaluationSkipRef.current === identityWeights) {
-      identityEvaluationSkipRef.current = null;
-      return;
-    }
-    const request = ++identityGenerationRef.current;
-    setGnmExpressionStatus("evaluating");
-    const timer = window.setTimeout(() => {
-      evaluateGnmParameters(identityWeights, gnmExpressionWeights)
-        .then((evaluation) => {
-          if (request !== identityGenerationRef.current) return;
-          setIdentityVertices(evaluation.positions);
-          setIdentityStatus("ready");
-          setGnmExpressionStatus("ready");
-        })
-        .catch((error) => {
-          if (request !== identityGenerationRef.current) return;
-          setIdentityStatus("error");
-          setGnmExpressionStatus("error");
-          setDeviceError(`GNM expression evaluation: ${error instanceof Error ? error.message : String(error)}`);
-        });
-    }, 18);
-    return () => window.clearTimeout(timer);
-  }, [evaluateGnmParameters, gnmExpressionWeights, identityWeights, settings.avatarKind]);
-
-  const resampleExpressionSeed = (slot: "a" | "b") => {
-    const seed = `GNM-EXP-${crypto.getRandomValues(new Uint32Array(1))[0].toString(16).toUpperCase()}`;
-    if (slot === "a") setGnmExpressionSeedA(seed);
-    else setGnmExpressionSeedB(seed);
-    setGnmExpressionAbActive(true);
-  };
-
-  const setRawGnmExpressionWeight = (index: number, value: number) => {
-    setGnmExpressionAbActive(false);
-    setGnmExpressionWeights((current) => {
-      const next = current.slice();
-      next[index] = Math.min(2, Math.max(-2, value));
-      return applyFrozenGnmExpressionComponents(next, gnmFrozenExpressionComponents);
-    });
-  };
-
-  const toggleRawGnmExpressionFreeze = (index: number) => {
-    setGnmFrozenExpressionComponents((current) => {
-      if (index in current) {
-        const next = { ...current };
-        delete next[index];
-        return next;
-      }
-      return { ...current, [index]: gnmExpressionWeightsRef.current[index] };
-    });
-  };
-
-  const mirrorRawGnmExpression = (direction: "left-to-right" | "right-to-left") => {
-    setGnmExpressionAbActive(false);
-    setGnmExpressionWeights((current) => applyFrozenGnmExpressionComponents(
-      mirrorGnmEyeRegion(current, direction),
-      gnmFrozenExpressionComponents,
-    ));
-  };
-
-  const resetRawGnmExpression = () => {
-    setGnmFrozenExpressionComponents({});
-    setGnmExpressionWeights(new Float32Array(383));
-    setGnmExpressionBlend(0);
-    setGnmExpressionAbActive(false);
-  };
-
-  const chooseIdentityPresentation = (presentation: typeof identityGender) => {
-    setIdentityGender(presentation);
-    setIdentityPresentationStrength(presentation === "female" ? -1 : presentation === "male" ? 1 : 0);
-  };
-
-  const chooseIdentityPopulation = (population: typeof identityEthnicity) => {
-    setIdentityEthnicity(population);
-    const index = { middle_eastern: 0, asian: 1, white: 2, black: 3 } as const;
-    if (population === "blend") setIdentityPopulationWeights([0.25, 0.25, 0.25, 0.25]);
-    else setIdentityPopulationWeights([0, 1, 2, 3].map((value) => value === index[population] ? 1 : 0) as [number, number, number, number]);
-  };
-
-  const updateIdentityPopulationWeight = (index: number, value: number) => {
-    setIdentityEthnicity("blend");
-    setIdentityPopulationWeights((current) => {
-      const next = [...current] as [number, number, number, number];
-      next[index] = Math.min(1, Math.max(0, value));
-      return next;
-    });
-  };
-
-  const compareIdentityPresentation = () => {
-    const next = identityPresentationStrength <= 0 ? 1 : -1;
-    setIdentityPresentationStrength(next);
-    setIdentityGender(next < 0 ? "female" : "male");
-  };
-
-  const captureCurrentFullState = () => captureRecordedTakeSnapshot({
-    settings,
-    identityVertices,
-    identityParameters: {
-      seed: identitySeed,
-      presentation: identityGender,
-      population: identityEthnicity,
-      presentationStrength: identityPresentationStrength,
-      populationWeights: identityPopulationWeights,
-    },
-    identityWeights,
-    gnmExpressionWeights,
-    gnmFrozenExpressionComponents,
-    manualExpressions,
-    frozenExpressions,
-    neutralFrame,
-    viewState: currentViewStateRef.current,
-    backgroundImageUrl,
-  });
-
-  const saveNewFullStatePreset = () => {
-    try {
-      const preset = createFullStatePreset(presetName, captureCurrentFullState());
-      setFullStatePresets((current) => [...current, preset]);
-      setSelectedPresetId(preset.id);
-      setPresetName(preset.name);
-      pushToast({ type: "success", title: "Preset saved", message: `${preset.name} now stores this model, identity, 383-component expression, materials, layers, calibration and camera view.` });
-    } catch (error) {
-      setDeviceError(`Save preset: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const updateSelectedFullStatePreset = () => {
-    const existing = fullStatePresets.find((preset) => preset.id === selectedPresetId);
-    if (!existing) return;
-    try {
-      const updated = createFullStatePreset(existing.name, captureCurrentFullState(), existing);
-      setFullStatePresets((current) => current.map((preset) => preset.id === existing.id ? updated : preset));
-      pushToast({ type: "success", title: "Preset updated", message: `${updated.name} now contains the current full state.` });
-    } catch (error) {
-      setDeviceError(`Update preset: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const renameSelectedFullStatePreset = () => {
-    const existing = fullStatePresets.find((preset) => preset.id === selectedPresetId);
-    if (!existing) return;
-    try {
-      const renamed = createFullStatePreset(presetName, existing.snapshot, existing);
-      setFullStatePresets((current) => current.map((preset) => preset.id === existing.id ? renamed : preset));
-      setPresetName(renamed.name);
-      pushToast({ type: "success", title: "Preset renamed", message: `The preset is now named ${renamed.name}.` });
-    } catch (error) {
-      setDeviceError(`Rename preset: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const loadSelectedFullStatePreset = () => {
-    const preset = fullStatePresets.find((entry) => entry.id === selectedPresetId);
-    if (!preset) return;
-    const snapshot = preset.snapshot;
-    setSettings(snapshot.settings);
-    setIdentitySeed(snapshot.identityParameters.seed);
-    setIdentityGender(snapshot.identityParameters.presentation);
-    setIdentityEthnicity(snapshot.identityParameters.population);
-    setIdentityPresentationStrength(snapshot.identityParameters.presentationStrength);
-    setIdentityPopulationWeights(snapshot.identityParameters.populationWeights ?? [0.25, 0.25, 0.25, 0.25]);
-    if (snapshot.identityWeights) setIdentityWeights(snapshot.identityWeights.slice());
-    setGnmExpressionWeights(snapshot.gnmExpressionWeights?.slice() ?? new Float32Array(383));
-    setGnmFrozenExpressionComponents(snapshot.gnmFrozenExpressionComponents ?? {});
-    setGnmExpressionAbActive(false);
-    setManualExpressions({ ...snapshot.manualExpressions });
-    setFrozenExpressions({ ...snapshot.frozenExpressions });
-    setNeutralFrame(snapshot.neutralFrame);
-    neutralFrameRef.current = snapshot.neutralFrame;
-    mouthOpenGateRef.current.reset();
-    setForcedViewState(snapshot.viewState);
-    if (snapshot.backgroundImageUrl) adoptBackgroundImageUrl(snapshot.backgroundImageUrl);
-    pushToast({ type: "success", title: "Preset loaded", message: `${preset.name} was restored and is being evaluated locally.` });
-  };
-
-  const deleteSelectedFullStatePreset = () => {
-    const preset = fullStatePresets.find((entry) => entry.id === selectedPresetId);
-    if (!preset) return;
-    setFullStatePresets((current) => current.filter((entry) => entry.id !== selectedPresetId));
-    setSelectedPresetId("");
-    pushToast({ type: "info", title: "Preset deleted", message: `${preset.name} was removed from local storage.` });
-  };
-
-  const importPresetBundle = async (file: File | undefined) => {
-    if (!file) return;
-    try {
-      if (file.size > 64 * 1024 * 1024) throw new Error("The selected preset bundle exceeds the 64 MB safety limit.");
-      const bundle = parseFullStatePresetBundle(JSON.parse(await file.text()));
-      setFullStatePresets((current) => {
-        const byId = new Map(current.map((preset) => [preset.id, preset]));
-        for (const preset of bundle.presets) byId.set(preset.id, preset);
-        return [...byId.values()].slice(0, 16);
-      });
-      if (bundle.presets[0]) {
-        setSelectedPresetId(bundle.presets[0].id);
-        setPresetName(bundle.presets[0].name);
-      }
-      pushToast({ type: "success", title: "Preset bundle imported", message: `${bundle.presets.length} validated preset${bundle.presets.length === 1 ? "" : "s"} are available locally.` });
-    } catch (error) {
-      setDeviceError(`Import preset bundle: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const exportPresetBundle = async () => {
-    if (!fullStatePresets.length) return;
-    try {
-      const bytes = new TextEncoder().encode(serializePresetBundle(fullStatePresets));
-      const result = await saveBytes(bytes, timestampedFilename("json", "_preset_bundle"), "application/json");
-      showSaveResult("Preset bundle exported", `${fullStatePresets.length} named full-state preset${fullStatePresets.length === 1 ? "" : "s"}`, result);
-    } catch (error) {
-      setDeviceError(`Export preset bundle: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  const randomizeIdentity = () => {
-    const seed = `GNM-${crypto.getRandomValues(new Uint32Array(1))[0].toString(16).toUpperCase()}`;
-    setIdentitySeed(seed);
-    void generateIdentity(seed);
-  };
-
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     if ((recordingState !== "idle" || captureFinalizing || motionVideoRendering || pngSequenceRendering) && recordingAppearanceSettingKeys.has(key)) {
       pushToast({
@@ -816,6 +450,37 @@ function App() {
     onInfo: (title, message) => pushToast({ type: "info", title, message }),
     onError: setDeviceError,
   });
+
+  const presetController = usePresets({
+    captureSnapshot: () => captureRecordedTakeSnapshot({
+      settings,
+      identityVertices,
+      identityParameters: { seed: identitySeed, presentation: identityGender, population: identityEthnicity, presentationStrength: identityPresentationStrength, populationWeights: identityPopulationWeights },
+      identityWeights,
+      gnmExpressionWeights,
+      gnmFrozenExpressionComponents,
+      manualExpressions,
+      frozenExpressions,
+      neutralFrame,
+      viewState: currentViewStateRef.current,
+      backgroundImageUrl,
+    }),
+    applySnapshot: (snapshot) => {
+      setSettings(snapshot.settings);
+      restoreGnmState(snapshot);
+      setManualExpressions({ ...snapshot.manualExpressions });
+      setFrozenExpressions({ ...snapshot.frozenExpressions });
+      setNeutralFrame(snapshot.neutralFrame);
+      neutralFrameRef.current = snapshot.neutralFrame;
+      mouthOpenGateRef.current.reset();
+      setForcedViewState(snapshot.viewState);
+      if (snapshot.backgroundImageUrl) adoptBackgroundImageUrl(snapshot.backgroundImageUrl);
+    },
+    onToast: pushToast,
+    onError: setDeviceError,
+    onSaved: (result, count) => showSaveResult("Preset bundle exported", `${count} named full-state preset${count === 1 ? "" : "s"}`, result),
+  });
+  const { presets: fullStatePresets, selectedId: selectedPresetId, name: presetName } = presetController;
 
   const setCaptureProcessingPaused = (paused: boolean, synchronizeRecording: boolean) => {
     if (calibrating || captureFinalizing) return;
@@ -1928,19 +1593,7 @@ function App() {
       updateSetting("avatarKind", importedAppearance.settings.avatarKind);
       setManualExpressions(importedAppearance.manualExpressions);
       setFrozenExpressions(importedAppearance.frozenExpressions);
-      setIdentityVertices(importedAppearance.identityVertices);
-      if (importedAppearance.identityWeights) {
-        identityEvaluationSkipRef.current = importedAppearance.identityWeights;
-        identityWeightsRef.current = importedAppearance.identityWeights;
-        setIdentityWeights(importedAppearance.identityWeights);
-      }
-      if (importedAppearance.gnmExpressionWeights) setGnmExpressionWeights(importedAppearance.gnmExpressionWeights);
-      setGnmFrozenExpressionComponents(importedAppearance.gnmFrozenExpressionComponents ?? {});
-      setIdentitySeed(importedAppearance.identityParameters.seed);
-      setIdentityGender(importedAppearance.identityParameters.presentation);
-      setIdentityEthnicity(importedAppearance.identityParameters.population);
-      setIdentityPresentationStrength(importedAppearance.identityParameters.presentationStrength);
-      if (importedAppearance.identityParameters.populationWeights) setIdentityPopulationWeights(importedAppearance.identityParameters.populationWeights);
+      restoreGnmState(importedAppearance);
       const previousBackgroundUrl = recordedAppearanceRef.current?.backgroundImageUrl;
       if (previousBackgroundUrl && previousBackgroundUrl !== backgroundImageUrl) URL.revokeObjectURL(previousBackgroundUrl);
       recordedAppearanceRef.current = importedAppearance;
@@ -2710,10 +2363,10 @@ function App() {
         showCapture={() => { setActivePanel("capture"); setActiveWorkspace("capture"); }}
         avatarContent={<>
           <AvatarModelPanel avatarKind={settings.avatarKind} gnmInfo={gnmInfo} select={(avatarKind) => { updateSetting("avatarKind", avatarKind); pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: avatarKind === "facecap" ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." }); }} />
-          {activeProfile.supportsIdentity && <IdentityPanel seed={identitySeed} presentation={identityGender} population={identityEthnicity} presentationStrength={identityPresentationStrength} populationWeights={identityPopulationWeights} status={identityStatus} recordingIdle={recordingState === "idle"} web={isWebEdition} webBackend={webIdentityBackend} setSeed={setIdentitySeed} setPresentation={chooseIdentityPresentation} setPopulation={chooseIdentityPopulation} setPresentationStrength={(value) => { setIdentityPresentationStrength(value); setIdentityGender(Math.abs(value) < 0.01 ? "blend" : value < 0 ? "female" : "male"); }} setPopulationWeight={updateIdentityPopulationWeight} randomize={randomizeIdentity} comparePresentation={compareIdentityPresentation} generate={() => void generateIdentity()} />}
-          <PresetPanel presets={fullStatePresets} selectedId={selectedPresetId} name={presetName} recordingIdle={recordingState === "idle"} inputRef={presetInputRef} select={(id) => { setSelectedPresetId(id); const preset = fullStatePresets.find((entry) => entry.id === id); if (preset) setPresetName(preset.name); }} setName={setPresetName} save={saveNewFullStatePreset} load={loadSelectedFullStatePreset} update={updateSelectedFullStatePreset} rename={renameSelectedFullStatePreset} remove={deleteSelectedFullStatePreset} exportBundle={() => void exportPresetBundle()} />
+          {activeProfile.supportsIdentity && <IdentityPanel seed={identitySeed} presentation={identityGender} population={identityEthnicity} presentationStrength={identityPresentationStrength} populationWeights={identityPopulationWeights} status={identityStatus} recordingIdle={recordingState === "idle"} web={isWebEdition} webBackend={webIdentityBackend} setSeed={identity.setSeed} setPresentation={identity.choosePresentation} setPopulation={identity.choosePopulation} setPresentationStrength={identity.setPresentationStrength} setPopulationWeight={identity.updatePopulationWeight} randomize={identity.randomize} comparePresentation={identity.comparePresentation} generate={() => void identity.generate()} />}
+          <PresetPanel presets={fullStatePresets} selectedId={selectedPresetId} name={presetName} recordingIdle={recordingState === "idle"} inputRef={presetInputRef} select={presetController.select} setName={presetController.setName} save={presetController.save} load={presetController.load} update={presetController.update} rename={presetController.rename} remove={presetController.remove} exportBundle={() => void presetController.exportBundle()} />
           <AvatarAppearancePanels settings={settings} updateSetting={updateSetting} />
-          <ExpressionPanel avatarKind={settings.avatarKind} avatarLabel={activeProfile.shortLabel} expressionCount={activeProfile.expressionCount} manual={manualExpressions} frozen={frozenExpressions} disabled={recordingState !== "idle" || captureFinalizing} setManual={(name, value) => setManualExpressions((current) => ({ ...current, [name]: value }))} toggleFreeze={toggleExpressionFreeze} resetExpressions={resetActiveExpressions} resetJoints={() => { const names = new Set<string>(manualJointGroups.flatMap((group) => group.controls.map(([name]) => name))); setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); }} gnm={{ semanticA: gnmExpressionA, semanticB: gnmExpressionB, seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend, weights: gnmExpressionWeights, frozen: gnmFrozenExpressionComponents, ready: expressionDecoderReady, busy: gnmExpressionStatus === "evaluating", backend: isDesktopRuntime ? "Native Rust" : webIdentityBackend === "webgpu" ? "WebGPU worker" : "CPU worker", setSemanticA: (value) => { setGnmExpressionA(value); setGnmExpressionAbActive(true); }, setSemanticB: (value) => { setGnmExpressionB(value); setGnmExpressionAbActive(true); }, setSeedA: (value) => { setGnmExpressionSeedA(value); setGnmExpressionAbActive(true); }, setSeedB: (value) => { setGnmExpressionSeedB(value); setGnmExpressionAbActive(true); }, resampleA: () => resampleExpressionSeed("a"), resampleB: () => resampleExpressionSeed("b"), setBlend: (value) => { setGnmExpressionBlend(value); setGnmExpressionAbActive(true); }, setWeight: setRawGnmExpressionWeight, toggleFreeze: toggleRawGnmExpressionFreeze, mirror: mirrorRawGnmExpression, reset: resetRawGnmExpression }} />
+          <ExpressionPanel avatarKind={settings.avatarKind} avatarLabel={activeProfile.shortLabel} expressionCount={activeProfile.expressionCount} manual={manualExpressions} frozen={frozenExpressions} disabled={recordingState !== "idle" || captureFinalizing} setManual={(name, value) => setManualExpressions((current) => ({ ...current, [name]: value }))} toggleFreeze={toggleExpressionFreeze} resetExpressions={resetActiveExpressions} resetJoints={() => { const names = new Set<string>(manualJointGroups.flatMap((group) => group.controls.map(([name]) => name))); setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); }} gnm={{ semanticA: gnmExpressionA, semanticB: gnmExpressionB, seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend, weights: gnmExpressionWeights, frozen: gnmFrozenExpressionComponents, ready: expressionDecoderReady, busy: gnmExpressionStatus === "evaluating", backend: isDesktopRuntime ? "Native Rust" : webIdentityBackend === "webgpu" ? "WebGPU worker" : "CPU worker", setSemanticA: expression.setSemanticA, setSemanticB: expression.setSemanticB, setSeedA: expression.setSeedA, setSeedB: expression.setSeedB, resampleA: expression.resampleA, resampleB: expression.resampleB, setBlend: expression.setBlend, setWeight: expression.setWeight, toggleFreeze: expression.toggleFreeze, mirror: expression.mirror, reset: expression.reset }} />
         </>}
         captureContent={<CaptureSidebarContent web={isWebEdition} settings={settings} cameras={cameras} cameraReady={cameraAccess === "ready"} permissionAsking={permissionState === "asking"} ffmpegStatus={ffmpegStatus} ffmpegVersion={ffmpegVersion} updateSetting={updateSetting} enumerateDevices={() => void enumerateDevices()} requestAccess={() => void requestDeviceAccess()} checkFfmpeg={() => void checkFfmpeg()} chooseFfmpeg={() => void chooseFfmpegExecutable()} openFfmpegDownload={() => void openExternal("https://ffmpeg.org/download.html")} />}
       />
@@ -2820,7 +2473,7 @@ function App() {
         toasts={toasts}
         onDismiss={dismissToast}
       />
-      <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void importPresetBundle(file)} />
+      <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void presetController.importBundle(file)} />
     </main>
     {backendMenu && createPortal(<BackendMenu position={backendMenu} backend={settings.trackingBackend} gpuProbe={gpuProbe} cpuProbe={cpuProbe} close={() => setBackendMenu(null)} select={selectTrackingBackend} />, document.body)}
     {settingsOpen && createPortal(<SettingsPopover web={isWebEdition} theme={theme} accent={accent} uiScale={uiScale} settings={settings} appVersion={appVersion} close={() => setSettingsOpen(false)} setTheme={setTheme} setAccent={setAccent} setUiScale={setUiScale} updateSetting={updateSetting} openExternal={(url) => void openExternal(url)} />, document.body)}
