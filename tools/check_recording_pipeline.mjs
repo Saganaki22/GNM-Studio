@@ -87,7 +87,12 @@ assert.equal(parsedV2.appearance?.settings.exportFps, 60);
 assert.equal(parsedV2.appearance?.identityParameters.presentationStrength, -0.75);
 assert.deepEqual(Array.from(parsedV2.appearance?.identityVertices ?? []), [0, 1, 2]);
 
-const app = ["../src/App.tsx", "../src/features/recording/TransportDock.tsx"]
+const app = [
+  "../src/App.tsx",
+  "../src/features/recording/TransportDock.tsx",
+  "../src/features/capture/useCaptureDevices.ts",
+  "../src/features/tracking/useFaceTracker.ts",
+]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
 for (const marker of [

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const app = ["../src/App.tsx", "../src/features/shell/StudioTopBar.tsx"]
+const app = [
+  "../src/App.tsx",
+  "../src/features/shell/StudioTopBar.tsx",
+  "../src/features/capture/useCaptureDevices.ts",
+  "../src/features/capture/useAudioMonitor.ts",
+]
   .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8"))
   .join("\n");
 for (const marker of [

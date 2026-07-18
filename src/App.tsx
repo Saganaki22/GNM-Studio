@@ -9,6 +9,7 @@ import { useStudioSettings } from "./features/settings/useStudioSettings";
 import { RightSidebar } from "./features/stage/RightSidebar";
 import { StudioViewport } from "./features/stage/StudioViewport";
 import { DeviceAccessPrompt } from "./features/devices/DeviceAccessPrompt";
+import { useCaptureDevices } from "./features/capture/useCaptureDevices";
 import { ExpressionPanel } from "./features/expression/ExpressionPanel";
 import { useFullscreenControls } from "./features/fullscreen/useFullscreenControls";
 import { useGnmRuntime } from "./features/gnm/useGnmRuntime";
@@ -20,6 +21,8 @@ import { LeftSidebar } from "./features/shell/LeftSidebar";
 import { StudioFileInputs } from "./features/shell/StudioFileInputs";
 import { StudioTopBar } from "./features/shell/StudioTopBar";
 import { BackendMenu } from "./features/tracking/BackendMenu";
+import { useFaceTracker } from "./features/tracking/useFaceTracker";
+import { useNeutralCalibration } from "./features/tracking/useNeutralCalibration";
 import { useToasts } from "./features/toasts/useToasts";
 import { ToastCenter } from "./components/ToastCenter";
 import { saveBlob, saveBytes, type SaveResult } from "./lib/save";
@@ -29,19 +32,15 @@ import {
   outputChannelName, type MainToOutputCommand, type MainToOutputMessage, type OutputOwnerPhase, type OutputSnapshot, type OutputToMainMessage,
 } from "./lib/outputChannel";
 import { parseMotionFile } from "./lib/motionFile";
-import { MouthOpenGate, mouthOpenInfluence, semanticInfluences } from "./lib/retarget";
-import { AdaptiveTrackingSmoother } from "./lib/trackingSmoothing";
+import { mouthOpenInfluence, semanticInfluences } from "./lib/retarget";
 import type { ViewportSize } from "./lib/coverProjection";
-import { assessFaceAlignment } from "./lib/faceAlignment";
 import { inspectRecordedMedia } from "./lib/mediaInspection";
-import {
-  cloneLiveAudioTrack, preferredAudioRecorderMimeType, preferredVideoRecorderMimeType, preferredWebmRecorderMimeType,
-} from "./lib/recordingMedia";
+import { preferredAudioRecorderMimeType, preferredVideoRecorderMimeType, preferredWebmRecorderMimeType } from "./lib/recordingMedia";
 import {
   captureRecordedTakeSnapshot, recordingAppearanceSettingKeys, serializableRecordedTakeSnapshot,
 } from "./lib/recordingAppearance";
 import type {
-  AppSettings, AvatarMotionSample, CameraViewState, DeviceOption, FaceAlignment,
+  AppSettings, AvatarMotionSample, CameraViewState,
   RecordedFrame, RecordedTakeSnapshot, TrackingBackend, TrackingFrame,
 } from "./types";
 import { canvasPngBlob } from "./lib/canvasCapture";
@@ -50,7 +49,7 @@ import { canMountStudioRenderer, outputOwnerBusy, phaseFromHeartbeat } from "./l
 import { trimAndRetimeMotion } from "./lib/motionEdit";
 import { afterBrowserPaint, formatTime, timestampedFilename } from "./lib/studioFormat";
 import { applyNeutralBaseline, estimateTrackingQuality, playbackTrackingFrame, recordedFrameAtTime } from "./lib/trackingFrames";
-import { isDesktopRuntime, isWebEdition, manualJointGroups, type BackendProbe, type FfmpegProbe, type Workspace } from "./app/studioConfig";
+import { isDesktopRuntime, isWebEdition, manualJointGroups, type FfmpegProbe, type Workspace } from "./app/studioConfig";
 import "./App.css";
 
 function App() {
@@ -63,28 +62,7 @@ function App() {
     uiScale, setUiScale, leftSidebarCollapsed, setLeftSidebarCollapsed,
     rightSidebarCollapsed, setRightSidebarCollapsed,
   } = useStudioSettings();
-  const [cameras, setCameras] = useState<DeviceOption[]>([]);
-  const [microphones, setMicrophones] = useState<DeviceOption[]>([]);
-  const [permissionState, setPermissionState] = useState<"idle" | "asking" | "ready" | "error">("idle");
-  const [cameraAccess, setCameraAccess] = useState<"idle" | "ready" | "unavailable">("idle");
-  const [microphoneAccess, setMicrophoneAccess] = useState<"idle" | "ready" | "unavailable">("idle");
-  const [devicePromptDismissed, setDevicePromptDismissed] = useState(false);
   const [deviceError, setDeviceError] = useState("");
-  const [trackingFrame, setTrackingFrame] = useState<TrackingFrame | null>(null);
-  const [trackerStatus, setTrackerStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [trackerDelegate, setTrackerDelegate] = useState("—");
-  const [trackerFallbackReason, setTrackerFallbackReason] = useState("");
-  const [gpuProbe, setGpuProbe] = useState<BackendProbe>({ available: null, reason: "Not tested yet" });
-  const [cpuProbe, setCpuProbe] = useState<BackendProbe>({ available: null, reason: "Not tested yet" });
-  const [backendMenu, setBackendMenu] = useState<{ x: number; y: number } | null>(null);
-  const [audioLevel, setAudioLevel] = useState(0);
-  const [audioPeak, setAudioPeak] = useState(0);
-  const [capturePaused, setCapturePaused] = useState(false);
-  const [monitoring, setMonitoring] = useState(false);
-  const [calibrating, setCalibrating] = useState(false);
-  const [calibrationComplete, setCalibrationComplete] = useState(false);
-  const [countdown, setCountdown] = useState<number | null>(null);
-  const [neutralFrame, setNeutralFrame] = useState<TrackingFrame | null>(null);
   const [recordingState, setRecordingState] = useState<"idle" | "recording" | "paused">("idle");
   const [recordingElapsed, setRecordingElapsed] = useState(0);
   const [recordedFrames, setRecordedFrames] = useState<RecordedFrame[]>([]);
@@ -116,9 +94,32 @@ function App() {
     : outputOwnerPhase === "connecting"
       ? "starting"
       : "active";
-  const [trackerRestartKey, setTrackerRestartKey] = useState(0);
   const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const { toasts, pushToast, dismissToast } = useToasts();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const resolveCaptureDeviceSelection = useCallback((cameraOptions: { id: string }[], microphoneOptions: { id: string }[]) => {
+    setSettings((current) => ({
+      ...current,
+      cameraId: cameraOptions.some((device) => device.id === current.cameraId)
+        ? current.cameraId : cameraOptions[0]?.id ?? "",
+      microphoneId: microphoneOptions.some((device) => device.id === current.microphoneId)
+        ? current.microphoneId : microphoneOptions[0]?.id ?? "",
+    }));
+  }, [setSettings]);
+  const captureDevices = useCaptureDevices({
+    videoRef,
+    cameraId: settings.cameraId,
+    microphoneId: settings.microphoneId,
+    cameraFps: settings.cameraFps,
+    muted: settings.muted,
+    resolveSelection: resolveCaptureDeviceSelection,
+    onToast: pushToast,
+    onError: setDeviceError,
+  });
+  const {
+    cameras, microphones, permissionState, cameraAccess, microphoneAccess, devicePromptDismissed,
+    paused: capturePaused, monitoring, audioLevel, audioPeak,
+  } = captureDevices;
   const { identity, expression, restoreState: restoreGnmState } = useGnmRuntime({
     avatarKind: settings.avatarKind,
     recordingIdle: recordingState === "idle",
@@ -137,45 +138,10 @@ function App() {
     seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend,
   } = expression;
   const [stageSize, setStageSize] = useState<ViewportSize>({ width: 640, height: 480 });
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const faceAlignment = useMemo(
-    () => assessFaceAlignment(trackingFrame, settings.mirror, videoRef.current, stageSize),
-    [settings.mirror, stageSize, trackingFrame],
-  );
-  const calibrationMouthOpen = useMemo(() => trackingFrame ? mouthOpenInfluence(
-    Object.fromEntries(trackingFrame.blendshapes.map(({ name, score }) => [name, score])),
-    trackingFrame.landmarks,
-  ) : 0, [trackingFrame]);
-  const calibrationFaceAlignment: FaceAlignment = calibrating
-    && faceAlignment.status === "ready" && calibrationMouthOpen > 0.12
-    ? { ...faceAlignment, status: "adjust", message: "Relax and close your mouth for a neutral calibration" }
-    : faceAlignment;
-  const calibrationReadiness: FaceAlignment = calibrating
-    ? calibrationFaceAlignment
-    : neutralFrame
-      ? { status: "ready", message: "Neutral calibration saved" }
-      : trackingFrame
-        ? { status: "ready", message: "Face detected — press Calibrate neutral when ready" }
-        : { status: "missing", message: cameraAccess === "ready" ? "Calibration idle — waiting for a face" : "Calibration idle — connect a camera when you want face tracking" };
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const motionInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
-  const cameraStreamRef = useRef<MediaStream | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const monitorNodeRef = useRef<GainNode | null>(null);
-  const mutedRef = useRef(settings.muted);
   const capturePausedRef = useRef(capturePaused);
-  const monitoringRef = useRef(monitoring);
-  const trackerWorkerRef = useRef<Worker | null>(null);
-  const trackerBusyRef = useRef(false);
-  const trackerBusySinceRef = useRef(0);
-  const trackerLastActivityRef = useRef(0);
-  const trackerFrameErrorsRef = useRef(0);
-  const trackerRecoveryPendingRef = useRef(false);
-  const trackerLastAutomaticRecoveryRef = useRef(0);
-  const trackerReloadReasonRef = useRef<string | null>(null);
-  const trackerHealthCheckRef = useRef<number | null>(null);
   const recordingFramesRef = useRef<RecordedFrame[]>([]);
   const recordedAppearanceRef = useRef<RecordedTakeSnapshot | null>(null);
   const recordingStartedAtRef = useRef(0);
@@ -204,26 +170,57 @@ function App() {
   const outputPngWaitersRef = useRef(new Map<string, { resolve: (blob: Blob) => void; reject: (error: Error) => void; timer: number }>());
   const webPopoutRef = useRef<Window | null>(null);
   const playbackAnimationRef = useRef<number | null>(null);
-  const trackingFrameRef = useRef<TrackingFrame | null>(null);
-  const faceAlignmentRef = useRef<FaceAlignment>(faceAlignment);
-  const trackingSmoothingRef = useRef(settings.trackingSmoothing);
-  const motionSmoothingRef = useRef(settings.motionSmoothing);
-  const trackingSmootherRef = useRef(new AdaptiveTrackingSmoother());
-  const mouthOpenGateRef = useRef(new MouthOpenGate());
-  const neutralFrameRef = useRef<TrackingFrame | null>(neutralFrame);
-  const mouthDeadZoneRef = useRef(settings.mouthDeadZone);
-  const calibrationSessionRef = useRef(0);
+  const neutralFrameGetterAdapterRef = useRef<() => TrackingFrame | null>(() => null);
 
-  mutedRef.current = settings.muted;
   capturePausedRef.current = capturePaused;
-  monitoringRef.current = monitoring;
-  trackingFrameRef.current = trackingFrame;
-  faceAlignmentRef.current = calibrationFaceAlignment;
-  trackingSmoothingRef.current = settings.trackingSmoothingEnabled ? settings.trackingSmoothing : 0;
-  motionSmoothingRef.current = settings.motionSmoothingEnabled ? settings.motionSmoothing : 0;
-  neutralFrameRef.current = neutralFrame;
-  mouthDeadZoneRef.current = settings.mouthDeadZone;
   outputOwnerPhaseRef.current = outputOwnerPhase;
+
+  const prepareTrackerReload = useCallback(() => {
+    if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
+    playbackAnimationRef.current = null;
+    setPlaying(false);
+    setPlaybackFrame(null);
+  }, []);
+  const changeTrackingBackend = useCallback((backend: TrackingBackend) => {
+    setSettings((current) => ({ ...current, trackingBackend: backend }));
+  }, [setSettings]);
+  const getNeutralFrameForTracking = useCallback(() => neutralFrameGetterAdapterRef.current(), []);
+  const tracker = useFaceTracker({
+    cameraReady: cameraAccess === "ready",
+    videoRef,
+    paused: capturePaused,
+    backend: settings.trackingBackend,
+    fps: settings.trackingFps,
+    trackingSmoothing: settings.trackingSmoothingEnabled ? settings.trackingSmoothing : 0,
+    motionSmoothing: settings.motionSmoothingEnabled ? settings.motionSmoothing : 0,
+    getNeutralFrame: getNeutralFrameForTracking,
+    mouthDeadZone: settings.mouthDeadZone,
+    onBackendChange: changeTrackingBackend,
+    onBeforeReload: prepareTrackerReload,
+    onToast: pushToast,
+    onError: setDeviceError,
+  });
+  const {
+    frame: trackingFrame, status: trackerStatus, delegate: trackerDelegate,
+    fallbackReason: trackerFallbackReason, gpuProbe, cpuProbe, backendMenu,
+  } = tracker;
+  const getCurrentTrackingFrame = tracker.getCurrentFrame;
+  const calibration = useNeutralCalibration({
+    videoRef,
+    stageSize,
+    mirror: settings.mirror,
+    cameraReady: cameraAccess === "ready",
+    recordingIdle: recordingState === "idle",
+    frame: trackingFrame,
+    getCurrentFrame: getCurrentTrackingFrame,
+    onNeutralChanged: tracker.resetFilters,
+    onToast: pushToast,
+  });
+  const {
+    neutralFrame, calibrating, complete: calibrationComplete, countdown,
+    faceAlignment: calibrationFaceAlignment, readiness: calibrationReadiness,
+  } = calibration;
+  neutralFrameGetterAdapterRef.current = calibration.getNeutralFrame;
 
   const storeAvatarMotion = useCallback((sample: AvatarMotionSample, frameTimestamp: number) => {
     latestAvatarMotionRef.current = { timestamp: frameTimestamp, sample };
@@ -389,15 +386,6 @@ function App() {
   }, [recordedFrames]);
 
   useEffect(() => {
-    if (!backendMenu) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setBackendMenu(null);
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [backendMenu]);
-
-  useEffect(() => {
     const suppressContextMenu = (event: MouseEvent) => event.preventDefault();
     window.addEventListener("contextmenu", suppressContextMenu);
     return () => window.removeEventListener("contextmenu", suppressContextMenu);
@@ -470,9 +458,7 @@ function App() {
       restoreGnmState(snapshot);
       setManualExpressions({ ...snapshot.manualExpressions });
       setFrozenExpressions({ ...snapshot.frozenExpressions });
-      setNeutralFrame(snapshot.neutralFrame);
-      neutralFrameRef.current = snapshot.neutralFrame;
-      mouthOpenGateRef.current.reset();
+      calibration.restoreNeutralFrame(snapshot.neutralFrame);
       setForcedViewState(snapshot.viewState);
       if (snapshot.backgroundImageUrl) adoptBackgroundImageUrl(snapshot.backgroundImageUrl);
     },
@@ -507,15 +493,7 @@ function App() {
       }
     }
     capturePausedRef.current = paused;
-    setCapturePaused(paused);
-    cameraStreamRef.current?.getVideoTracks().forEach((track) => { track.enabled = !paused; });
-    micStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !paused && !mutedRef.current; });
-    if (paused) {
-      setAudioLevel(0);
-      setAudioPeak(0);
-    } else if (videoRef.current?.srcObject) {
-      void videoRef.current.play().catch(() => undefined);
-    }
+    captureDevices.setPaused(paused);
     pushToast({
       type: paused ? "warning" : "success",
       title: paused ? "Capture paused" : "Capture resumed",
@@ -555,97 +533,6 @@ function App() {
         target?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")?.focus({ preventScroll: true });
       }
     }, 0);
-  };
-
-  const reloadTracker = useCallback((automaticReason?: string) => {
-    if (cameraAccess !== "ready") {
-      pushToast({
-        type: "warning",
-        title: "Camera is not available",
-        message: "Connect or allow the selected camera before reloading the MediaPipe tracker.",
-      });
-      return;
-    }
-    const now = performance.now();
-    if (automaticReason && trackerLastAutomaticRecoveryRef.current > 0 && now - trackerLastAutomaticRecoveryRef.current < 10_000) {
-      trackerRecoveryPendingRef.current = false;
-      setTrackerStatus("error");
-      setDeviceError(`MediaPipe tracker: automatic recovery did not stay healthy. ${automaticReason} Use Reload tracker to try again, or switch the tracking backend.`);
-      return;
-    }
-    trackerLastAutomaticRecoveryRef.current = automaticReason ? now : 0;
-    if (trackerHealthCheckRef.current !== null) {
-      window.clearTimeout(trackerHealthCheckRef.current);
-      trackerHealthCheckRef.current = null;
-    }
-    trackerRecoveryPendingRef.current = true;
-    trackerReloadReasonRef.current = automaticReason ?? "manual";
-    trackerBusyRef.current = false;
-    trackerBusySinceRef.current = 0;
-    trackerLastActivityRef.current = performance.now();
-    trackerFrameErrorsRef.current = 0;
-    trackingSmootherRef.current.reset();
-    mouthOpenGateRef.current.reset();
-    if (playbackAnimationRef.current) cancelAnimationFrame(playbackAnimationRef.current);
-    playbackAnimationRef.current = null;
-    setPlaying(false);
-    setPlaybackFrame(null);
-    setDeviceError("");
-    setTrackingFrame(null);
-    setTrackerStatus("loading");
-    setTrackerDelegate("Restarting…");
-    setTrackerFallbackReason("");
-    const video = videoRef.current;
-    if (video?.srcObject && video.paused) void video.play().catch(() => undefined);
-    setTrackerRestartKey((value) => value + 1);
-    pushToast({
-      type: automaticReason ? "warning" : "info",
-      title: automaticReason ? "Recovering face tracking" : "Reloading MediaPipe tracker",
-      message: automaticReason ?? "The local face model and tracking worker are being loaded again. Your avatar and app settings will not be reset.",
-      duration: automaticReason ? 7_000 : 4_000,
-    });
-  }, [cameraAccess, pushToast]);
-
-  const scheduleTrackerHealthCheck = useCallback((exportName: string) => {
-    if (cameraAccess !== "ready" || trackerStatus !== "ready") return;
-    if (trackerHealthCheckRef.current !== null) window.clearTimeout(trackerHealthCheckRef.current);
-    trackerHealthCheckRef.current = window.setTimeout(() => {
-      trackerHealthCheckRef.current = null;
-      const activityAge = performance.now() - trackerLastActivityRef.current;
-      if (!trackerRecoveryPendingRef.current && (trackerBusyRef.current || activityAge > 3_500)) {
-        reloadTracker(`MediaPipe did not resume normally after the ${exportName}. The app is reloading the local tracker automatically.`);
-      }
-    }, 2_000);
-  }, [cameraAccess, reloadTracker, trackerStatus]);
-
-  const openBackendMenu = (x: number, y: number) => {
-    setSettingsOpen(false);
-    setBackendMenu({
-      x: Math.min(Math.max(8, x), window.innerWidth - 244),
-      y: Math.min(Math.max(8, y), window.innerHeight - 188),
-    });
-  };
-
-  const selectTrackingBackend = (backend: TrackingBackend) => {
-    if (backend === "gpu" && gpuProbe.available === false) return;
-    if (backend === "cpu" && cpuProbe.available === false) return;
-    setBackendMenu(null);
-    setDeviceError("");
-    setTrackingFrame(null);
-    setTrackerStatus("loading");
-    setTrackerFallbackReason("");
-    setTrackerDelegate(backend === "auto" ? "GPU → CPU" : backend.toUpperCase());
-    if (settings.trackingBackend === backend) {
-      setTrackerRestartKey((value) => value + 1);
-    } else {
-      updateSetting("trackingBackend", backend);
-    }
-    pushToast({
-      type: "info",
-      title: "Tracking backend changed",
-      message: backend === "auto" ? "MediaPipe will try GPU first and fall back to CPU." : `MediaPipe will restart using ${backend.toUpperCase()} only.`,
-      duration: 4_000,
-    });
   };
 
   const postToOutput = (command: MainToOutputCommand) => {
@@ -838,336 +725,6 @@ function App() {
     });
   };
 
-  const enumerateDevices = useCallback(async () => {
-    if (!navigator.mediaDevices) return;
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const cameraOptions = devices
-      .filter((device) => device.kind === "videoinput")
-      .map((device, index) => ({ id: device.deviceId, label: device.label || `Camera ${index + 1}` }));
-    const microphoneOptions = devices
-      .filter((device) => device.kind === "audioinput")
-      .map((device, index) => ({ id: device.deviceId, label: device.label || `Microphone ${index + 1}` }));
-    setCameras(cameraOptions);
-    setMicrophones(microphoneOptions);
-    setSettings((current) => ({
-      ...current,
-      cameraId: cameraOptions.some((device) => device.id === current.cameraId)
-        ? current.cameraId : cameraOptions[0]?.id ?? "",
-      microphoneId: microphoneOptions.some((device) => device.id === current.microphoneId)
-        ? current.microphoneId : microphoneOptions[0]?.id ?? "",
-    }));
-  }, [setSettings]);
-
-  useEffect(() => {
-    enumerateDevices();
-    navigator.mediaDevices?.addEventListener("devicechange", enumerateDevices);
-    return () => navigator.mediaDevices?.removeEventListener("devicechange", enumerateDevices);
-  }, [enumerateDevices]);
-
-  const requestDeviceAccess = async () => {
-    setPermissionState("asking");
-    setDevicePromptDismissed(false);
-    setDeviceError("");
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setPermissionState("error");
-      setCameraAccess("unavailable");
-      setMicrophoneAccess("unavailable");
-      setDeviceError("Capture devices: this system does not expose the MediaDevices API. The avatar editor can still be used without a camera.");
-      return;
-    }
-    try {
-      const [cameraResult, microphoneResult] = await Promise.allSettled([
-        navigator.mediaDevices.getUserMedia({ video: true, audio: false }),
-        navigator.mediaDevices.getUserMedia({ video: false, audio: true }),
-      ]);
-      if (cameraResult.status === "fulfilled") cameraResult.value.getTracks().forEach((track) => track.stop());
-      if (microphoneResult.status === "fulfilled") microphoneResult.value.getTracks().forEach((track) => track.stop());
-      const cameraReady = cameraResult.status === "fulfilled";
-      const microphoneReady = microphoneResult.status === "fulfilled";
-      setCameraAccess(cameraReady ? "ready" : "unavailable");
-      setMicrophoneAccess(microphoneReady ? "ready" : "unavailable");
-      await enumerateDevices();
-      if (!cameraReady && !microphoneReady) {
-        const cameraReason = cameraResult.status === "rejected" ? String(cameraResult.reason) : "Unavailable";
-        const microphoneReason = microphoneResult.status === "rejected" ? String(microphoneResult.reason) : "Unavailable";
-        setPermissionState("error");
-        setDeviceError(`Capture access was not granted. Camera: ${cameraReason}. Microphone: ${microphoneReason}. You can continue without capture devices and use the avatar manually.`);
-        return;
-      }
-      setPermissionState("ready");
-      const connected = [cameraReady && "camera", microphoneReady && "microphone"].filter(Boolean).join(" and ");
-      const unavailable = [!cameraReady && "camera", !microphoneReady && "microphone"].filter(Boolean).join(" and ");
-      pushToast({
-        type: unavailable ? "warning" : "success",
-        title: unavailable ? "Some capture hardware is unavailable" : "Capture devices connected",
-        message: `${connected[0].toUpperCase() + connected.slice(1)} access is ready. Available capture processing remains local to this computer.${unavailable ? ` ${unavailable[0].toUpperCase() + unavailable.slice(1)} access is unavailable, but the avatar editor still works.` : ""}`,
-        detail: unavailable ? `${unavailable[0].toUpperCase() + unavailable.slice(1)} access was unavailable or not granted. Offline avatar editing and rendering remain usable.` : undefined,
-        duration: unavailable ? 8_000 : 5_000,
-      });
-    } catch (error) {
-      setPermissionState("error");
-      setDeviceError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  useEffect(() => {
-    if (cameraAccess !== "ready" || !settings.cameraId) return;
-    let cancelled = false;
-    navigator.mediaDevices.getUserMedia({
-      video: {
-        deviceId: { exact: settings.cameraId },
-        frameRate: { ideal: settings.cameraFps },
-        width: { ideal: 1280 }, height: { ideal: 720 },
-      },
-      audio: false,
-    }).then((stream) => {
-      if (cancelled) return stream.getTracks().forEach((track) => track.stop());
-      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
-      cameraStreamRef.current = stream;
-      stream.getVideoTracks().forEach((track) => { track.enabled = !capturePausedRef.current; });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-    }).catch((error) => {
-      setCameraAccess("unavailable");
-      setDeviceError(`Camera stream: ${error instanceof Error ? error.message : String(error)}. Manual avatar tools remain available.`);
-    });
-    return () => { cancelled = true; };
-  }, [cameraAccess, settings.cameraFps, settings.cameraId]);
-
-  useEffect(() => {
-    if (microphoneAccess !== "ready" || !settings.microphoneId) return;
-    let stopped = false;
-    let animation = 0;
-    navigator.mediaDevices.getUserMedia({
-      video: false,
-      audio: {
-        deviceId: { exact: settings.microphoneId },
-        echoCancellation: true, noiseSuppression: true, autoGainControl: true,
-      },
-    }).then((stream) => {
-      if (stopped) return stream.getTracks().forEach((track) => track.stop());
-      micStreamRef.current?.getTracks().forEach((track) => track.stop());
-      micStreamRef.current = stream;
-      stream.getAudioTracks().forEach((track) => { track.enabled = !mutedRef.current && !capturePausedRef.current; });
-
-      const context = new AudioContext();
-      audioContextRef.current?.close();
-      audioContextRef.current = context;
-      const source = context.createMediaStreamSource(stream);
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.72;
-      const monitor = context.createGain();
-      monitor.gain.value = monitoringRef.current ? 0.8 : 0;
-      monitorNodeRef.current = monitor;
-      source.connect(analyser);
-      source.connect(monitor).connect(context.destination);
-      const data = new Float32Array(analyser.fftSize);
-      let peak = 0;
-      let lastUpdate = 0;
-      const tick = (now: number) => {
-        if (capturePausedRef.current) {
-          if (now - lastUpdate > 32) {
-            setAudioLevel(0);
-            setAudioPeak(0);
-            lastUpdate = now;
-          }
-          animation = requestAnimationFrame(tick);
-          return;
-        }
-        analyser.getFloatTimeDomainData(data);
-        let sum = 0;
-        for (const sample of data) sum += sample * sample;
-        const rms = Math.sqrt(sum / data.length);
-        const scaled = Math.min(1, Math.max(0, (20 * Math.log10(Math.max(rms, 1e-7)) + 60) / 60));
-        peak = Math.max(scaled, peak * 0.985);
-        if (now - lastUpdate > 32) {
-          setAudioLevel(mutedRef.current || capturePausedRef.current ? 0 : scaled);
-          setAudioPeak(mutedRef.current || capturePausedRef.current ? 0 : peak);
-          lastUpdate = now;
-        }
-        animation = requestAnimationFrame(tick);
-      };
-      tick(0);
-    }).catch((error) => {
-      setMicrophoneAccess("unavailable");
-      setDeviceError(`Microphone stream: ${error instanceof Error ? error.message : String(error)}. Silent avatar recording remains available.`);
-    });
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(animation);
-    };
-  }, [microphoneAccess, settings.microphoneId]);
-
-  useEffect(() => {
-    micStreamRef.current?.getAudioTracks().forEach((track) => {
-      track.enabled = !settings.muted && !capturePausedRef.current;
-    });
-  }, [settings.muted]);
-
-  useEffect(() => {
-    if (monitorNodeRef.current) monitorNodeRef.current.gain.value = monitoring ? 0.8 : 0;
-  }, [monitoring]);
-
-  useEffect(() => {
-    if (cameraAccess !== "ready") {
-      setTrackerStatus("idle");
-      setTrackerDelegate("—");
-      return;
-    }
-    trackerBusyRef.current = false;
-    trackerBusySinceRef.current = 0;
-    trackerFrameErrorsRef.current = 0;
-    const worker = new Worker(new URL("./faceTracker.worker.ts", import.meta.url), { type: "module" });
-    trackerWorkerRef.current = worker;
-    setTrackerStatus("loading");
-    worker.onmessage = (event) => {
-      if (event.data.type === "ready") {
-        const reloadReason = trackerReloadReasonRef.current;
-        trackerReloadReasonRef.current = null;
-        trackerRecoveryPendingRef.current = false;
-        trackerLastActivityRef.current = performance.now();
-        trackerFrameErrorsRef.current = 0;
-        setTrackerStatus("ready");
-        setTrackerDelegate(event.data.delegate === "CPU" && event.data.fallbackReason ? "CPU fallback" : event.data.delegate);
-        setTrackerFallbackReason(event.data.fallbackReason ?? "");
-        if (event.data.delegate === "GPU") {
-          setGpuProbe({ available: true, reason: "GPU delegate initialized successfully" });
-        } else {
-          setCpuProbe({ available: true, reason: "CPU delegate initialized successfully" });
-        }
-        if (event.data.fallbackReason) {
-          setGpuProbe({ available: false, reason: event.data.fallbackReason });
-        }
-        setDeviceError((current) => current.startsWith("MediaPipe tracker:") ? "" : current);
-        if (event.data.fallbackReason) {
-          pushToast({
-            type: "warning",
-            title: "GPU tracking unavailable",
-            message: "MediaPipe is running locally on CPU fallback. Tracking still works, but may use more processor time.",
-            detail: event.data.fallbackReason,
-            duration: 8_000,
-          });
-        }
-        if (reloadReason) {
-          pushToast({
-            type: "success",
-            title: "MediaPipe tracker ready",
-            message: reloadReason === "manual"
-              ? "The local face model was reloaded successfully. Live avatar motion and landmarks can resume."
-              : "Face tracking recovered successfully without changing your avatar, calibration, or settings.",
-          });
-        }
-      }
-      if (event.data.type === "fallback") {
-        setTrackerDelegate("GPU → CPU");
-        setGpuProbe({ available: false, reason: event.data.message });
-      }
-      if (event.data.type === "result") {
-        trackerLastActivityRef.current = performance.now();
-        trackerFrameErrorsRef.current = 0;
-        if (capturePausedRef.current) return;
-        const rawFrame = event.data.frame as TrackingFrame | null;
-        if (rawFrame) {
-          const smoothed = trackingSmootherRef.current.smooth(
-            rawFrame,
-            trackingSmoothingRef.current,
-            motionSmoothingRef.current,
-          );
-          smoothed.mouthOpen = mouthOpenGateRef.current.update(smoothed, neutralFrameRef.current, mouthDeadZoneRef.current);
-          setTrackingFrame(smoothed);
-        } else {
-          trackingSmootherRef.current.reset();
-          mouthOpenGateRef.current.reset();
-          setTrackingFrame(null);
-        }
-      }
-      if (event.data.type === "frame-error") {
-        trackerLastActivityRef.current = performance.now();
-        trackerFrameErrorsRef.current += 1;
-        if (trackerFrameErrorsRef.current >= 3 && !trackerRecoveryPendingRef.current) {
-          reloadTracker(`MediaPipe failed to process ${trackerFrameErrorsRef.current} consecutive camera frames. The GPU context may have been interrupted, so the tracker is restarting automatically.`);
-        }
-      }
-      if (event.data.type === "idle") {
-        trackerBusyRef.current = false;
-        trackerBusySinceRef.current = 0;
-      }
-      if (event.data.type === "error") {
-        trackerRecoveryPendingRef.current = false;
-        trackerReloadReasonRef.current = null;
-        trackerBusyRef.current = false;
-        trackerBusySinceRef.current = 0;
-        setTrackerStatus("error");
-        if (event.data.requestedBackend === "gpu") {
-          setGpuProbe({ available: false, reason: event.data.message });
-        }
-        if (event.data.requestedBackend === "cpu") {
-          setCpuProbe({ available: false, reason: event.data.message });
-        }
-        if (event.data.requestedBackend === "auto") {
-          setCpuProbe({ available: false, reason: event.data.message });
-        }
-        setDeviceError(`MediaPipe tracker: ${event.data.message}`);
-      }
-    };
-    worker.onerror = (event) => {
-      trackerRecoveryPendingRef.current = false;
-      trackerReloadReasonRef.current = null;
-      trackerBusyRef.current = false;
-      trackerBusySinceRef.current = 0;
-      setTrackerStatus("error");
-      setDeviceError(`MediaPipe tracker: the tracking worker stopped unexpectedly (${event.message || "unknown worker error"}). Use Reload tracker to recover.`);
-    };
-    worker.onmessageerror = () => {
-      trackerBusyRef.current = false;
-      trackerBusySinceRef.current = 0;
-      setTrackerStatus("error");
-      setDeviceError("MediaPipe tracker: the tracking worker returned unreadable frame data. Use Reload tracker to recover.");
-    };
-    worker.postMessage({ type: "init", preference: settings.trackingBackend });
-    return () => {
-      worker.terminate();
-      trackerBusyRef.current = false;
-      trackerBusySinceRef.current = 0;
-      if (trackerWorkerRef.current === worker) trackerWorkerRef.current = null;
-    };
-  }, [cameraAccess, pushToast, reloadTracker, settings.trackingBackend, trackerRestartKey]);
-
-  useEffect(() => {
-    if (trackerStatus !== "ready") return;
-    let animation = 0;
-    let lastCapture = 0;
-    const capture = async (now: number) => {
-      if (capturePausedRef.current) {
-        animation = requestAnimationFrame(capture);
-        return;
-      }
-      const video = videoRef.current;
-      const interval = 1000 / Math.max(1, settings.trackingFps);
-      if (trackerBusyRef.current && trackerBusySinceRef.current > 0 && now - trackerBusySinceRef.current > 4_000 && !trackerRecoveryPendingRef.current) {
-        reloadTracker("MediaPipe stopped returning camera frames for four seconds. The local tracking worker is being restarted automatically.");
-      }
-      if (video && video.readyState >= 2 && now - lastCapture >= interval && !trackerBusyRef.current) {
-        trackerBusyRef.current = true;
-        trackerBusySinceRef.current = now;
-        lastCapture = now;
-        try {
-          const bitmap = await createImageBitmap(video);
-          trackerWorkerRef.current?.postMessage({ type: "frame", bitmap, timestamp: now }, [bitmap]);
-        } catch {
-          trackerBusyRef.current = false;
-          trackerBusySinceRef.current = 0;
-        }
-      }
-      animation = requestAnimationFrame(capture);
-    };
-    animation = requestAnimationFrame(capture);
-    return () => cancelAnimationFrame(animation);
-  }, [reloadTracker, settings.trackingFps, trackerStatus]);
-
   useEffect(() => {
     if (!trackingFrame || recordingState !== "recording") return;
     const calibratedFrame = applyNeutralBaseline(trackingFrame, neutralFrame) ?? trackingFrame;
@@ -1189,72 +746,6 @@ function App() {
       pendingAvatarMotionFramesRef.current.set(calibratedFrame.timestamp, recordingFramesRef.current.length - 1);
     }
   }, [neutralFrame, recordingState, trackingFrame]);
-
-  const calibrate = async () => {
-    if (recordingState !== "idle" || !trackingFrame) return;
-    const session = ++calibrationSessionRef.current;
-    setCalibrating(true);
-    setCalibrationComplete(false);
-    setCountdown(null);
-    let readySince: number | null = null;
-    let stableAnchor: Pick<FaceAlignment, "centerX" | "centerY" | "sizeRatio"> | null = null;
-
-    while (calibrationSessionRef.current === session) {
-      const alignment = faceAlignmentRef.current;
-      const currentFrame = trackingFrameRef.current;
-      if (alignment.status !== "ready" || !currentFrame) {
-        readySince = null;
-        stableAnchor = null;
-        setCountdown(null);
-      } else {
-        const now = performance.now();
-        const movedSinceAnchor = stableAnchor
-          && alignment.centerX !== undefined && alignment.centerY !== undefined && alignment.sizeRatio !== undefined
-          && stableAnchor.centerX !== undefined && stableAnchor.centerY !== undefined && stableAnchor.sizeRatio !== undefined
-          && (
-            Math.hypot(alignment.centerX - stableAnchor.centerX, alignment.centerY - stableAnchor.centerY) > 0.018
-            || Math.abs(alignment.sizeRatio - stableAnchor.sizeRatio) > 0.035
-          );
-        if (!stableAnchor || movedSinceAnchor) {
-          stableAnchor = {
-            centerX: alignment.centerX,
-            centerY: alignment.centerY,
-            sizeRatio: alignment.sizeRatio,
-          };
-          readySince = now;
-        }
-        readySince ??= now;
-        const elapsed = performance.now() - readySince;
-        if (elapsed >= 3_000) {
-          setNeutralFrame(currentFrame);
-          neutralFrameRef.current = currentFrame;
-          mouthOpenGateRef.current.reset();
-          setCountdown(null);
-          setCalibrationComplete(true);
-          pushToast({
-            type: "success",
-            title: "Neutral pose calibrated",
-            message: "The aligned live frame is now the neutral baseline for head movement and expressions.",
-          });
-          window.setTimeout(() => {
-            if (calibrationSessionRef.current !== session) return;
-            setCalibrating(false);
-            setCalibrationComplete(false);
-          }, 700);
-          return;
-        }
-        setCountdown(Math.max(1, 3 - Math.floor(elapsed / 1_000)));
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
-    }
-  };
-
-  const cancelCalibration = () => {
-    calibrationSessionRef.current += 1;
-    setCalibrating(false);
-    setCalibrationComplete(false);
-    setCountdown(null);
-  };
 
   const startRecording = async () => {
     if (capturePausedRef.current) {
@@ -1344,7 +835,7 @@ function App() {
     const audioBitrate = settings.audioBitrateKbps * 1_000;
     setLastVideoQuality({ videoBitrate, audioBitrate });
     if (settings.recordingMode === "motion") {
-      const audioTrack = cloneLiveAudioTrack(micStreamRef.current, settings.muted);
+      const audioTrack = captureDevices.cloneAudioTrack();
       if (audioTrack) {
         recordingIncludesAudio = true;
         const stream = new MediaStream([audioTrack]);
@@ -1396,7 +887,7 @@ function App() {
         if (!canvas) throw new Error("The rendered capture surface is not ready yet.");
         const stream = canvas.captureStream(settings.exportFps);
         captureStream = stream;
-        const audioTrack = cloneLiveAudioTrack(micStreamRef.current, settings.muted);
+        const audioTrack = captureDevices.cloneAudioTrack();
         if (audioTrack) stream.addTrack(audioTrack);
         const expectedAudio = Boolean(audioTrack);
         recordingIncludesAudio = expectedAudio;
@@ -1587,9 +1078,7 @@ function App() {
         viewState: motion.viewState,
         backgroundImageUrl,
       });
-      setNeutralFrame(importedAppearance.neutralFrame);
-      neutralFrameRef.current = importedAppearance.neutralFrame;
-      mouthOpenGateRef.current.reset();
+      calibration.restoreNeutralFrame(importedAppearance.neutralFrame);
       updateSetting("avatarKind", importedAppearance.settings.avatarKind);
       setManualExpressions(importedAppearance.manualExpressions);
       setFrozenExpressions(importedAppearance.frozenExpressions);
@@ -1656,7 +1145,7 @@ function App() {
     } catch (error) {
       setDeviceError(`Motion JSON export failed: ${String(error)}`);
     } finally {
-      scheduleTrackerHealthCheck("JSON export");
+      tracker.scheduleHealthCheck("JSON export");
     }
   };
 
@@ -2006,7 +1495,7 @@ function App() {
       setDeviceError(`WebM export failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setVideoExportProgress(null);
-      scheduleTrackerHealthCheck("WebM export");
+      tracker.scheduleHealthCheck("WebM export");
     }
   };
 
@@ -2072,7 +1561,7 @@ function App() {
       setForcedViewState(restoreView);
       await afterBrowserPaint();
       setForcedViewState(null);
-      scheduleTrackerHealthCheck("PNG sequence export");
+      tracker.scheduleHealthCheck("PNG sequence export");
     }
   };
 
@@ -2169,7 +1658,7 @@ function App() {
     } finally {
       setVideoExportProgress(null);
       setVideoExportBackend(null);
-      scheduleTrackerHealthCheck("MP4 export");
+      tracker.scheduleHealthCheck("MP4 export");
     }
   };
 
@@ -2181,7 +1670,7 @@ function App() {
     } catch (error) {
       setDeviceError(`WebM source export failed: ${String(error)}`);
     } finally {
-      scheduleTrackerHealthCheck("WebM export");
+      tracker.scheduleHealthCheck("WebM export");
     }
   };
 
@@ -2222,7 +1711,7 @@ function App() {
     } catch (error) {
       setDeviceError(`Animated GLB export failed: ${String(error)}`);
     } finally {
-      scheduleTrackerHealthCheck("GLB export");
+      tracker.scheduleHealthCheck("GLB export");
     }
   };
 
@@ -2308,11 +1797,8 @@ function App() {
   const stageNeutralFrame = stageAppearance?.neutralFrame ?? neutralFrame;
   const stageBackgroundImageUrl = stageAppearance?.backgroundImageUrl ?? backgroundImageUrl;
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !cameraStreamRef.current) return;
-    if (video.srcObject !== cameraStreamRef.current) video.srcObject = cameraStreamRef.current;
-    void video.play().catch(() => undefined);
-  }, [popoutState]);
+    captureDevices.attachVideo();
+  }, [captureDevices, popoutState]);
 
   useEffect(() => {
     if (popoutState !== "active") return;
@@ -2323,7 +1809,7 @@ function App() {
       identityVertices: stageIdentityVertices,
       manualExpressions: stageManualExpressions,
       frozenExpressions: stageFrozenExpressions,
-      trackingReady: Boolean(trackingFrameRef.current),
+      trackingReady: Boolean(getCurrentTrackingFrame()),
       capturePaused,
       recordingActive: motionVideoRendering || pngSequenceRendering || recordingState !== "idle",
       resetViewSignal,
@@ -2331,7 +1817,7 @@ function App() {
       viewState: stageAppearance?.viewState ?? currentViewStateRef.current,
     };
     postToOutput({ type: "snapshot", snapshot });
-  }, [captureFinalizing, capturePaused, motionVideoRendering, pngSequenceRendering, popoutState, recordingState, resetViewSignal, stageAppearance, stageBackgroundImageUrl, stageFrozenExpressions, stageIdentityVertices, stageManualExpressions, stageNeutralFrame, stageSettings]);
+  }, [captureFinalizing, capturePaused, getCurrentTrackingFrame, motionVideoRendering, pngSequenceRendering, popoutState, recordingState, resetViewSignal, stageAppearance, stageBackgroundImageUrl, stageFrozenExpressions, stageIdentityVertices, stageManualExpressions, stageNeutralFrame, stageSettings]);
 
   useEffect(() => {
     if (popoutState !== "active") return;
@@ -2350,7 +1836,7 @@ function App() {
         workspace={activeWorkspace}
         activateWorkspace={activateWorkspace}
         capture={{ paused: capturePaused, calibrating, finalizing: captureFinalizing, cameraAccess, microphoneAccess, statusTitle: captureStatusTitle, connectedCount: connectedCaptureCount, toggle: toggleCaptureProcessing }}
-        backend={{ menuOpen: Boolean(backendMenu), trackerStatus, delegate: trackerDelegate, openMenu: openBackendMenu }}
+        backend={{ menuOpen: Boolean(backendMenu), trackerStatus, delegate: trackerDelegate, openMenu: (x, y) => { setSettingsOpen(false); tracker.openBackendMenu(x, y); } }}
         recording={{ state: recordingState, elapsed: recordingElapsed }}
         settings={{ open: settingsOpen, toggle: () => setSettingsOpen((value) => !value) }}
       />
@@ -2368,7 +1854,7 @@ function App() {
           <AvatarAppearancePanels settings={settings} updateSetting={updateSetting} />
           <ExpressionPanel avatarKind={settings.avatarKind} avatarLabel={activeProfile.shortLabel} expressionCount={activeProfile.expressionCount} manual={manualExpressions} frozen={frozenExpressions} disabled={recordingState !== "idle" || captureFinalizing} setManual={(name, value) => setManualExpressions((current) => ({ ...current, [name]: value }))} toggleFreeze={toggleExpressionFreeze} resetExpressions={resetActiveExpressions} resetJoints={() => { const names = new Set<string>(manualJointGroups.flatMap((group) => group.controls.map(([name]) => name))); setManualExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); setFrozenExpressions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => !names.has(name)))); }} gnm={{ semanticA: gnmExpressionA, semanticB: gnmExpressionB, seedA: gnmExpressionSeedA, seedB: gnmExpressionSeedB, blend: gnmExpressionBlend, weights: gnmExpressionWeights, frozen: gnmFrozenExpressionComponents, ready: expressionDecoderReady, busy: gnmExpressionStatus === "evaluating", backend: isDesktopRuntime ? "Native Rust" : webIdentityBackend === "webgpu" ? "WebGPU worker" : "CPU worker", setSemanticA: expression.setSemanticA, setSemanticB: expression.setSemanticB, setSeedA: expression.setSeedA, setSeedB: expression.setSeedB, resampleA: expression.resampleA, resampleB: expression.resampleB, setBlend: expression.setBlend, setWeight: expression.setWeight, toggleFreeze: expression.toggleFreeze, mirror: expression.mirror, reset: expression.reset }} />
         </>}
-        captureContent={<CaptureSidebarContent web={isWebEdition} settings={settings} cameras={cameras} cameraReady={cameraAccess === "ready"} permissionAsking={permissionState === "asking"} ffmpegStatus={ffmpegStatus} ffmpegVersion={ffmpegVersion} updateSetting={updateSetting} enumerateDevices={() => void enumerateDevices()} requestAccess={() => void requestDeviceAccess()} checkFfmpeg={() => void checkFfmpeg()} chooseFfmpeg={() => void chooseFfmpegExecutable()} openFfmpegDownload={() => void openExternal("https://ffmpeg.org/download.html")} />}
+        captureContent={<CaptureSidebarContent web={isWebEdition} settings={settings} cameras={cameras} cameraReady={cameraAccess === "ready"} permissionAsking={permissionState === "asking"} ffmpegStatus={ffmpegStatus} ffmpegVersion={ffmpegVersion} updateSetting={updateSetting} enumerateDevices={() => void captureDevices.enumerateDevices()} requestAccess={() => void captureDevices.requestAccess()} checkFfmpeg={() => void checkFfmpeg()} chooseFfmpeg={() => void chooseFfmpegExecutable()} openFfmpegDownload={() => void openExternal("https://ffmpeg.org/download.html")} />}
       />
       <StudioViewport
         workspace={activeWorkspace}
@@ -2419,7 +1905,7 @@ function App() {
           recordingActive: motionVideoRendering || pngSequenceRendering || recordingState !== "idle",
           resetViewSignal,
           viewStateOverride: forcedViewState,
-          onCancelCalibration: cancelCalibration,
+          onCancelCalibration: calibration.cancel,
           onCompositeCanvas: handleCompositeCanvas,
           onStageError: handleStageError,
           onViewportResize: handleViewportResize,
@@ -2450,21 +1936,21 @@ function App() {
           onExportPng: () => void exportPngSequence(),
           onReturn: () => activateWorkspace("capture"),
         }}
-        accessPrompt={activeWorkspace !== "export" && permissionState !== "ready" && !devicePromptDismissed ? <DeviceAccessPrompt permissionState={permissionState} error={deviceError} requestAccess={() => void requestDeviceAccess()} continueWithoutCapture={() => { setDevicePromptDismissed(true); pushToast({ type: "info", title: "Continuing without capture", message: "Avatar creation, manual expressions, backgrounds, lighting, and avatar-video export remain available." }); }} /> : undefined}
+        accessPrompt={activeWorkspace !== "export" && permissionState !== "ready" && !devicePromptDismissed ? <DeviceAccessPrompt permissionState={permissionState} error={deviceError} requestAccess={() => void captureDevices.requestAccess()} continueWithoutCapture={captureDevices.continueWithoutCapture} /> : undefined}
       />
       <RightSidebar
         collapsed={rightSidebarCollapsed}
         toggleCollapsed={() => setRightSidebarCollapsed((value) => !value)}
-        tracking={{ status: trackerStatus, score: faceConfidence, label: trackingQualityLabel, fallbackReason: trackerFallbackReason, delegate: trackerDelegate, cameraReady: cameraAccess === "ready", reload: () => reloadTracker() }}
+        tracking={{ status: trackerStatus, score: faceConfidence, label: trackingQualityLabel, fallbackReason: trackerFallbackReason, delegate: trackerDelegate, cameraReady: cameraAccess === "ready", reload: () => tracker.reload() }}
         settings={settings}
         updateSetting={updateSetting}
         avatarLabel={activeProfile.shortLabel}
         calibrating={calibrating}
-        calibration={{ neutralFrame, readiness: calibrationReadiness, recordingIdle: recordingState === "idle", trackerReady: trackerStatus === "ready", hasFrame: Boolean(trackingFrame), start: () => void calibrate() }}
+        calibration={{ neutralFrame, readiness: calibrationReadiness, recordingIdle: recordingState === "idle", trackerReady: trackerStatus === "ready", hasFrame: Boolean(trackingFrame), start: () => void calibration.calibrate() }}
         background={{ url: backgroundImageUrl, name: backgroundImageName, inputRef: backgroundInputRef, clear: () => void clearBackgroundImage() }}
       />
       <TransportDock
-        audio={{ devices: microphones, selectedId: settings.microphoneId, level: audioLevel, peak: audioPeak, muted: settings.muted, monitoring, select: (id) => updateSetting("microphoneId", id), toggleMute: () => updateSetting("muted", !settings.muted), toggleMonitoring: () => setMonitoring((value) => !value), refresh: () => void enumerateDevices() }}
+        audio={{ devices: microphones, selectedId: settings.microphoneId, level: audioLevel, peak: audioPeak, muted: settings.muted, monitoring, select: (id) => updateSetting("microphoneId", id), toggleMute: () => updateSetting("muted", !settings.muted), toggleMonitoring: () => captureDevices.setMonitoring((value) => !value), refresh: () => void captureDevices.enumerateDevices() }}
         recording={{ state: recordingState, elapsed: recordingElapsed, frameCount: recordedFrames.length, draftFrameCount: recordingFramesRef.current.length, playing, playbackActive: Boolean(playbackFrame || playing), calibrating, finalizing: captureFinalizing, videoBusy: videoExportProgress !== null, popoutStarting: popoutState === "starting", motionNeedsFace: !trackingFrame && settings.recordingMode === "motion", start: () => void startRecording(), stop: stopRecording, togglePause, returnLive: returnToLiveTracking }}
         timeline={{ percent: timelinePercent, duration: timelineDuration, position: timelinePosition, recordedDuration, playbackDuration, seek: seekPlayback }}
         exports={{ fps: settings.exportFps, motionInputRef, hasTake: recordedFrames.length > 0, hasVideo: Boolean(lastVideo), sourceIsWebm: Boolean(lastVideo && !lastVideo.type.includes("mp4")), videoProgress: videoExportProgress, backend: videoExportBackend, setFps: (value) => updateSetting("exportFps", value), useCurrentLook: useCurrentAppearanceForTake, exportMotion: () => void exportMotion(), exportGlb: () => void exportGlb(), exportWebmSource: () => void exportWebmSource(), exportVideo: () => void exportVideo() }}
@@ -2475,7 +1961,7 @@ function App() {
       />
       <StudioFileInputs motionRef={motionInputRef} backgroundRef={backgroundInputRef} presetRef={presetInputRef} importMotion={(file) => void importMotionJson(file)} chooseBackground={(file) => void chooseBackgroundImage(file)} importPresets={(file) => void presetController.importBundle(file)} />
     </main>
-    {backendMenu && createPortal(<BackendMenu position={backendMenu} backend={settings.trackingBackend} gpuProbe={gpuProbe} cpuProbe={cpuProbe} close={() => setBackendMenu(null)} select={selectTrackingBackend} />, document.body)}
+    {backendMenu && createPortal(<BackendMenu position={backendMenu} backend={settings.trackingBackend} gpuProbe={gpuProbe} cpuProbe={cpuProbe} close={tracker.closeBackendMenu} select={tracker.selectBackend} />, document.body)}
     {settingsOpen && createPortal(<SettingsPopover web={isWebEdition} theme={theme} accent={accent} uiScale={uiScale} settings={settings} appVersion={appVersion} close={() => setSettingsOpen(false)} setTheme={setTheme} setAccent={setAccent} setUiScale={setUiScale} updateSetting={updateSetting} openExternal={(url) => void openExternal(url)} />, document.body)}
     </>
   );
