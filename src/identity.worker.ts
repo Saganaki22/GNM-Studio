@@ -3,6 +3,7 @@ import { evaluateWebIdentity, parseWebIdentityRuntime, type WebIdentityRuntime }
 import { WebGpuIdentityEvaluator } from "./lib/webIdentityWebGpu";
 import { addWebExpression, parseWebExpressionRuntime, type WebExpressionRuntime } from "./lib/webExpressionRuntime";
 import { WebGpuExpressionEvaluator } from "./lib/webExpressionWebGpu";
+import { readMaybeGzippedRuntime } from "./lib/runtimeAsset";
 
 type EvaluateMessage = { type: "evaluate"; id: number; weights: Float32Array };
 type EvaluateExpressionMessage = { type: "evaluate-expression"; id: number; identityWeights: Float32Array; expressionWeights: Float32Array };
@@ -17,10 +18,7 @@ async function loadRuntime() {
   if (runtimePromise) return runtimePromise;
   runtimePromise = (async () => {
     const response = await fetch(assetUrl("models/gnm_identity_basis.gni.gz"));
-    if (!response.ok || !response.body) throw new Error(`Could not load the web identity runtime (${response.status}).`);
-    if (typeof DecompressionStream === "undefined") throw new Error("This browser does not support local gzip decompression. Use a current Chromium, Firefox, or Safari release.");
-    const decompressed = response.body.pipeThrough(new DecompressionStream("gzip"));
-    const buffer = await new Response(decompressed).arrayBuffer();
+    const buffer = await readMaybeGzippedRuntime(response, "GNI1");
     return parseWebIdentityRuntime(buffer);
   })();
   return runtimePromise;
@@ -30,9 +28,7 @@ async function loadExpressionRuntime() {
   if (expressionRuntimePromise) return expressionRuntimePromise;
   expressionRuntimePromise = (async () => {
     const response = await fetch(assetUrl("models/gnm_expression_basis.gne.gz"));
-    if (!response.ok || !response.body) throw new Error(`Could not load the web expression runtime (${response.status}).`);
-    if (typeof DecompressionStream === "undefined") throw new Error("This browser does not support local gzip decompression.");
-    const buffer = await new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+    const buffer = await readMaybeGzippedRuntime(response, "GNE1");
     return parseWebExpressionRuntime(buffer);
   })();
   return expressionRuntimePromise;

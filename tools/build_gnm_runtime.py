@@ -26,6 +26,13 @@ EXPRESSION_LABELS = (
     "mouth_right", "lips_roll_in", "snarl", "tongue_center",
 )
 RUNTIME_MORPH_LABELS = EXPRESSION_LABELS + ("jaw_open",)
+POSE_MORPH_LABELS = tuple(
+    f"pose_{joint}_{row}{column}"
+    for joint in ("neck", "head", "left_eye", "right_eye")
+    for row in range(3)
+    for column in range(3)
+)
+ALL_MORPH_LABELS = RUNTIME_MORPH_LABELS + POSE_MORPH_LABELS
 
 
 def dense_decoder(path: Path) -> list[tuple[np.ndarray, np.ndarray]]:
@@ -73,22 +80,65 @@ def semantic_expressions() -> np.ndarray:
     return parameters
 
 
-def canonical_mouth_open_expression() -> np.ndarray:
-    """Return a deterministic, anatomy-native lower-face opening vector.
+def anatomical_mouth_open_expression(model: np.lib.npyio.NpzFile) -> np.ndarray:
+    """Solve a jaw opening directly in GNM's released lower-face basis.
 
-    This is a released GNM expression-decoder sample selected offline for a
-    clear lip gap, stable upper dental arch, and bounded chin displacement.
-    Eye, tongue, and iris regions are zeroed so jaw tracking only drives the
-    model's learned lower-face basis.
+    This is intentionally not a decoder-generated semantic expression.  Build
+    a 21-degree anatomical jaw hinge target, constrain the upper lip against
+    forward protrusion, then fit components 200..349 with ridge least squares.
     """
-    rng = np.random.default_rng(0x474E4D)
-    latent = rng.normal(size=(303, 64)).astype(np.float32)[302]
-    inputs = np.zeros((1, 64 + len(EXPRESSION_LABELS)), dtype=np.float32)
-    inputs[0, :64] = latent
-    inputs[0, 64 + EXPRESSION_LABELS.index("surprise")] = 1.0
-    parameters = decode_expression_inputs(inputs)[0]
-    parameters[:200] = 0.0
-    parameters[350:] = 0.0
+    names = [str(name) for name in model["vertex_group_names"]]
+    groups = np.asarray(model["vertex_groups"]) > 0.5
+    vertices = np.asarray(model["template_vertex_positions"], dtype=np.float64)
+    lower_basis = np.asarray(model["expression_basis"], dtype=np.float64)[200:350]
+    target_sum = np.zeros_like(vertices)
+    target_weight = np.zeros(len(vertices), dtype=np.float64)
+
+    def members(name: str) -> np.ndarray:
+        if name not in names:
+            raise RuntimeError(f"GNM anatomy is missing required vertex group {name}")
+        return groups[names.index(name)]
+
+    def constrain(name: str, delta: np.ndarray, weight: float) -> None:
+        selected = members(name)
+        values = delta[selected] if delta.shape == vertices.shape else delta
+        target_sum[selected] += values * weight
+        target_weight[selected] += weight
+
+    hinge = np.array([0.0, 0.2378, 0.0720], dtype=np.float64)
+    angle = np.deg2rad(21.0)
+    rotation = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, np.cos(angle), -np.sin(angle)],
+        [0.0, np.sin(angle), np.cos(angle)],
+    ])
+    jaw_delta = (vertices - hinge) @ rotation.T - (vertices - hinge)
+    constrain("lower_teeth_and_gums", jaw_delta, 12.0)
+    constrain("chin_region", jaw_delta, 8.0)
+    constrain("lower_lip_region", jaw_delta * 0.90, 7.0)
+    constrain("lower_lip", jaw_delta, 10.0)
+    mouth_sock_weight = np.clip((0.240 - vertices[:, 1]) / 0.035, 0.0, 1.0)[:, None]
+    constrain("mouth_sock", jaw_delta * mouth_sock_weight * 0.80, 3.0)
+    constrain("left_cheek_region", jaw_delta * 0.22, 1.0)
+    constrain("right_cheek_region", jaw_delta * 0.22, 1.0)
+    # The strong upper-lip constraint directly fixes the former protrusion.
+    constrain("upper_lip", np.array([0.0, 0.0015, -0.0007]), 50.0)
+    constrain("upper_teeth_and_gums", np.zeros(3), 20.0)
+
+    selected = np.flatnonzero(target_weight)
+    targets = target_sum[selected] / target_weight[selected, None]
+    weights = np.repeat(np.sqrt(target_weight[selected])[:, None], 3, axis=1).reshape(-1)
+    design = lower_basis[:, selected, :].transpose(1, 2, 0).reshape(-1, 150)
+    weighted_design = design * weights[:, None]
+    weighted_targets = targets.reshape(-1) * weights
+    regularisation = np.sqrt(1e-3) * np.eye(150)
+    coefficients = np.linalg.lstsq(
+        np.vstack([weighted_design, regularisation]),
+        np.concatenate([weighted_targets, np.zeros(150)]),
+        rcond=None,
+    )[0]
+    parameters = np.zeros(383, dtype=np.float32)
+    parameters[200:350] = coefficients.astype(np.float32)
     return parameters
 
 
@@ -149,7 +199,7 @@ def stabilize_mouth_open_delta(
 ) -> np.ndarray:
     """Strengthen learned opening with official anatomy and collision limits."""
     source = np.asarray(delta, dtype=np.float32)
-    result = source * np.float32(1.30)
+    result = source.copy()
     names = [str(name) for name in vertex_group_names]
     def members(name: str) -> np.ndarray:
         if name not in names:
@@ -158,23 +208,18 @@ def stabilize_mouth_open_delta(
 
     upper = members("upper_teeth_and_gums")
     lower = members("lower_teeth_and_gums")
-    chin = members("chin_region")
     result[upper] = 0.0
-    # GNM's learned basis can deform individual tooth vertices slightly. A
-    # single anatomy-native translation prevents stretched enamel and moves
-    # the complete lower teeth/gum island farther down with the jaw.
-    lower_translation = source[lower].mean(axis=0) * np.float32(1.80)
-    # Keep a small vertical clearance above the deformed chin. This prevents
-    # the lower enamel/gum island crossing the lower lip/chin at a full 1.0
-    # jaw value while preserving a visibly wide opening.
-    chin_top = float(np.max(vertices[chin, 1] + result[chin, 1]))
-    dental_bottom = float(np.min(vertices[lower, 1]))
-    minimum_clearance = 0.0015
-    lower_translation[1] = max(
-        float(lower_translation[1]),
-        chin_top + minimum_clearance - dental_bottom,
-    )
-    result[lower] = lower_translation
+    # Enforce one rigid hinge transform for the complete lower dental arch.
+    # This preserves every tooth/gum relationship instead of stretching or
+    # translating individual vertices by an averaged procedural delta.
+    hinge = np.array([0.0, 0.2378, 0.0720], dtype=np.float32)
+    angle = np.deg2rad(21.0)
+    rotation = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, np.cos(angle), -np.sin(angle)],
+        [0.0, np.sin(angle), np.cos(angle)],
+    ], dtype=np.float32)
+    result[lower] = (vertices[lower] - hinge) @ rotation.T - (vertices[lower] - hinge)
     return result
 
 
@@ -248,28 +293,83 @@ def write_glb(
     vertices: np.ndarray,
     triangles: np.ndarray,
     morph_deltas: np.ndarray,
+    template_joints: np.ndarray,
+    skinning_weights: np.ndarray,
+    parent_indices: np.ndarray,
+    pose_correctives: np.ndarray,
+    joint_names: np.ndarray,
 ) -> None:
     builder = GlbBuilder()
     position = builder.add_array(vertices, 5126, "VEC3", 34962, True)
     normal = builder.add_array(vertex_normals(vertices, triangles), 5126, "VEC3", 34962)
     texture_coordinates = builder.add_array(cylindrical_uv(vertices), 5126, "VEC2", 34962)
     indices = builder.add_array(triangles.reshape(-1).astype(np.uint32), 5125, "SCALAR", 34963)
+    vertex_joint_indices = np.broadcast_to(
+        np.arange(len(template_joints), dtype=np.uint16),
+        (len(vertices), len(template_joints)),
+    )
+    joints = builder.add_array(vertex_joint_indices, 5123, "VEC4", 34962)
+    weights = builder.add_array(
+        np.asarray(skinning_weights.T, dtype=np.float32), 5126, "VEC4", 34962
+    )
+    pose_deltas = np.asarray(pose_correctives, dtype=np.float32).reshape(
+        len(template_joints) * 9, len(vertices), 3
+    )
+    all_deltas = np.concatenate([morph_deltas, pose_deltas], axis=0)
     targets = [
-        {"POSITION": builder.add_array(delta, 5126, "VEC3", 34962)}
-        for delta in morph_deltas
+        {"POSITION": builder.add_array(delta, 5126, "VEC3", 34962, True)}
+        for delta in all_deltas
     ]
+
+    inverse_bind_matrices = np.repeat(
+        np.eye(4, dtype=np.float32)[None, :, :], len(template_joints), axis=0
+    )
+    inverse_bind_matrices[:, :3, 3] = -template_joints
+    # glTF matrices are stored column-major.
+    inverse_bind = builder.add_array(
+        inverse_bind_matrices.transpose(0, 2, 1), 5126, "MAT4"
+    )
+
+    nodes: list[dict[str, object]] = [{
+        "mesh": 0,
+        "skin": 0,
+        "name": "GNM_Head_v3",
+        "children": [1 + index for index, parent in enumerate(parent_indices) if parent < 0],
+    }]
+    for joint, (name, parent) in enumerate(zip(joint_names, parent_indices)):
+        translation = template_joints[joint] if parent < 0 else template_joints[joint] - template_joints[int(parent)]
+        children = [1 + index for index, candidate_parent in enumerate(parent_indices) if candidate_parent == joint]
+        node: dict[str, object] = {
+            "name": str(name),
+            "translation": np.asarray(translation, dtype=float).tolist(),
+        }
+        if children:
+            node["children"] = children
+        nodes.append(node)
 
     document = {
         "asset": {"version": "2.0", "generator": "GNM Studio runtime converter"},
         "scene": 0,
         "scenes": [{"nodes": [0]}],
-        "nodes": [{"mesh": 0, "name": "GNM_Head_v3"}],
+        "nodes": nodes,
+        "skins": [{
+            "name": "GNM_Head_v3_Rig",
+            "inverseBindMatrices": inverse_bind,
+            "skeleton": 1,
+            "joints": list(range(1, 1 + len(template_joints))),
+        }],
         "meshes": [{
             "name": "GNM_Head_v3",
-            "extras": {"targetNames": list(RUNTIME_MORPH_LABELS)},
-            "weights": [0.0] * len(RUNTIME_MORPH_LABELS),
+            "extras": {"targetNames": list(ALL_MORPH_LABELS)},
+            "weights": [0.0] * len(ALL_MORPH_LABELS),
             "primitives": [{
-                "attributes": {"POSITION": position, "NORMAL": normal, "TEXCOORD_0": texture_coordinates},
+                "attributes": {
+                    "POSITION": position,
+                    "NORMAL": normal,
+                    "TEXCOORD_0": texture_coordinates,
+                    "JOINTS_0": joints,
+                    "WEIGHTS_0": weights,
+                },
                 "indices": indices,
                 "material": 0,
                 "mode": 4,
@@ -294,6 +394,8 @@ def write_glb(
             "license": "Apache-2.0",
             "expressionLabels": list(EXPRESSION_LABELS),
             "runtimeMorphTargets": list(RUNTIME_MORPH_LABELS),
+            "poseMorphTargets": list(POSE_MORPH_LABELS),
+            "jointNames": [str(name) for name in joint_names],
         },
     }
 
@@ -330,7 +432,7 @@ def main() -> None:
     semantic_parameters = semantic_expressions()
     semantic_deltas = np.einsum("se,evc->svc", semantic_parameters, expression_basis, optimize=True)
     mouth_open_delta = np.einsum(
-        "e,evc->vc", canonical_mouth_open_expression(), expression_basis, optimize=True,
+        "e,evc->vc", anatomical_mouth_open_expression(model), expression_basis, optimize=True,
     )
     mouth_open_delta = stabilize_mouth_open_delta(
         vertices,
@@ -345,7 +447,17 @@ def main() -> None:
     )
 
     destination = OUTPUT / "gnm_head_runtime.glb"
-    write_glb(destination, vertices, triangles, morph_deltas.astype(np.float32))
+    write_glb(
+        destination,
+        vertices,
+        triangles,
+        morph_deltas.astype(np.float32),
+        np.asarray(model["template_joint_positions"], dtype=np.float32),
+        np.asarray(model["skinning_weights"], dtype=np.float32),
+        np.asarray(model["joint_parent_indices"], dtype=np.int32),
+        np.asarray(model["pose_correctives_regressor"], dtype=np.float32),
+        np.asarray(model["joint_names"]),
+    )
     write_decoder(
         OUTPUT / "gnm_identity_decoder.bin",
         dense_decoder(SOURCE / "identity_decoder_model.h5"),
@@ -368,6 +480,8 @@ def main() -> None:
         "expressionDimensions": int(expression_basis.shape[0]),
         "semanticExpressions": list(EXPRESSION_LABELS),
         "runtimeMorphTargets": list(RUNTIME_MORPH_LABELS),
+        "poseMorphTargets": list(POSE_MORPH_LABELS),
+        "jointNames": [str(name) for name in model["joint_names"]],
         "anatomicalVertexGroups": [str(name) for name in model["vertex_group_names"]],
     }
     (OUTPUT / "gnm_head_runtime.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")

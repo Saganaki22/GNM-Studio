@@ -46,7 +46,7 @@ interface StudioExportOptions {
   };
   output: {
     beginRecording(command: OutputStartCommand): Promise<void>;
-    waitForRecordingResult(requestId: string): Promise<Blob>;
+    waitForRecordingResult(requestId: string, timeoutMs?: number): Promise<Blob>;
     stopRecording(): void;
     capturePng(width: number, height: number): Promise<Blob>;
   };
@@ -94,6 +94,15 @@ export function useStudioExport(options: StudioExportOptions) {
     exportPlaybackSpeed,
     settings.exportFps,
   );
+
+  const renderSettingsChanged = () => {
+    const captured = recording.getAppearance()?.settings;
+    return Boolean(recordedFrames.length && captured && (
+      captured.exportWidth !== settings.exportWidth
+      || captured.exportHeight !== settings.exportHeight
+      || captured.exportFps !== settings.exportFps
+    ));
+  };
 
   const exportMotion = async () => {
     try {
@@ -197,7 +206,7 @@ export function useStudioExport(options: StudioExportOptions) {
     try {
       const sourceDuration = recordedFrames.at(-1)?.timestamp ?? 0;
       const editApplied = recordedFrames.length > 0 && (exportTrimStartMs > 0.5 || exportTrimEndMs < sourceDuration - 0.5 || Math.abs(exportPlaybackSpeed - 1) > 1e-4);
-      let webm = !editApplied && lastVideo?.type.includes("webm") ? lastVideo : null;
+      let webm = !editApplied && !renderSettingsChanged() && lastVideo?.type.includes("webm") ? lastVideo : null;
       if (!webm) {
         if (!recordedFrames.length) throw new Error("This take only has an MP4 pixel recording and no motion frames that can be rendered to WebM.");
         setVideoExportProgress(0);
@@ -301,7 +310,7 @@ export function useStudioExport(options: StudioExportOptions) {
     try {
       const sourceDuration = recordedFrames.at(-1)?.timestamp ?? 0;
       const editApplied = recordedFrames.length > 0 && (exportTrimStartMs > 0.5 || exportTrimEndMs < sourceDuration - 0.5 || Math.abs(exportPlaybackSpeed - 1) > 1e-4);
-      let video = editApplied ? null : lastVideo;
+      let video = editApplied || renderSettingsChanged() ? null : lastVideo;
       let quality = lastVideoQuality;
       let renderedFromMotion = false;
       if (!video) {

@@ -1,5 +1,15 @@
 export type Landmark = { x: number; y: number; z: number };
 
+export type QuaternionTuple = [number, number, number, number];
+
+export type GnmJointPose = {
+  /** Local GNM joint rotations in neck -> head -> eye hierarchy order. */
+  neck: QuaternionTuple;
+  head: QuaternionTuple;
+  leftEye: QuaternionTuple;
+  rightEye: QuaternionTuple;
+};
+
 export type AvatarMotionSample = {
   /** Display-space values after camera cover-cropping and mirroring. */
   centerX: number;
@@ -10,7 +20,9 @@ export type AvatarMotionSample = {
   /** Neutral-relative uniform scale for editable 3D export. */
   scale?: [number, number, number];
   /** The exact smoothed head pose shown by the live Stage. */
-  quaternion: [number, number, number, number];
+  quaternion: QuaternionTuple;
+  /** Exact local GNM joint rotations when recorded with the GNM avatar. */
+  gnmJoints?: GnmJointPose;
 };
 
 export type CameraViewState = {

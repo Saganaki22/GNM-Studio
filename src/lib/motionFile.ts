@@ -1,6 +1,6 @@
 import type {
   AppSettings, AvatarKind, AvatarMotionSample, CameraViewState, RecordedFrame,
-  RecordedIdentityParameters, RecordedTakeSnapshot, TrackingFrame,
+  GnmJointPose, RecordedIdentityParameters, RecordedTakeSnapshot, TrackingFrame,
 } from "../types";
 
 export type MotionFile = {
@@ -34,6 +34,18 @@ function tuple(value: unknown, length: number, field: string) {
   return value.map((entry, index) => finiteNumber(entry, `${field}[${index}]`));
 }
 
+function gnmJointPose(value: unknown, field: string): GnmJointPose | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${field} must be an object.`);
+  const pose = value as Record<string, unknown>;
+  return {
+    neck: tuple(pose.neck, 4, `${field}.neck`) as [number, number, number, number],
+    head: tuple(pose.head, 4, `${field}.head`) as [number, number, number, number],
+    leftEye: tuple(pose.leftEye, 4, `${field}.leftEye`) as [number, number, number, number],
+    rightEye: tuple(pose.rightEye, 4, `${field}.rightEye`) as [number, number, number, number],
+  };
+}
+
 function avatarMotion(value: unknown, field: string): AvatarMotionSample | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${field} must be an object.`);
@@ -50,6 +62,7 @@ function avatarMotion(value: unknown, field: string): AvatarMotionSample | undef
       ? undefined
       : tuple(sample.scale, 3, `${field}.scale`).map((entry) => Math.max(0.001, entry)) as [number, number, number],
     quaternion: quaternion as [number, number, number, number],
+    gnmJoints: gnmJointPose(sample.gnmJoints, `${field}.gnmJoints`),
   };
 }
 

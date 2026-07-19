@@ -164,6 +164,19 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] Enlarge the GNM procedural iris and pupil by 25% in the eye shader only.
 - [x] Document the hands-on runtime smoke-test checklist for release acceptance.
 
+## Version 1.3.1 deformation and export hotfix
+
+- [x] Replace the sampled semantic mouth-open target with a deterministic anatomical 383-component jaw solve.
+- [x] Keep the upper lip/teeth stable and hinge the lower teeth/gums as rigid anatomy during wide opening.
+- [x] Fuse MediaPipe jaw score and normalized inner-lip aperture without letting one weak channel cap deliberate opening.
+- [x] Stop double-driving jaw opening through `platysma` and the dedicated jaw target.
+- [x] Drive the real GNM neck, head and eye hierarchy with pose-corrective morphs instead of rotating the complete bust root.
+- [x] Retain four-joint animation in live tracking, recording, playback, JSON, popout and animated GLB export.
+- [x] Add iris-derived gaze and selected directional MediaPipe diagnostics to the landmark overlay.
+- [x] Make web identity/expression assets tolerate both raw gzip hosting and HTTP-decoded gzip under `/GNM-Studio/`.
+- [x] Restore playback/view state after offline WebM rendering and scale popout result timeouts to the take duration.
+- [x] Avoid copying large browser video blobs before download and hide impossible WebM/PNG-sequence paths for MP4-only takes.
+
 ## Next deformation and recording-correctness pass
 
 ### Fullscreen output controls
@@ -242,9 +255,63 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] Define recording behavior atomically: pausing capture also pauses the active media recorder and motion timeline, and Play resumes all of them together.
 - [x] Add accessible labels, tooltips, keyboard focus, and deterministic pause/resume tests for desktop and web builds.
 
+## MediaPipe to anatomical GNM retargeting parity
+
+The v1.3 audit confirmed that the released four-joint GNM deformation path is present in the native evaluator, but live tracking still rotates the rendered root object and layers a fixed `jaw_open` morph on top. The next pass must drive GNM's actual neck/head/eye joints and a fitted lower-face expression vector while keeping FaceCap's direct 52-channel path separate.
+
+### Reference captures and diagnostics
+
+- [ ] Record deterministic raw MediaPipe fixtures for relaxed neutral, half/full jaw opening, smile, pucker/funnel, left/right/up/down head pose, roll, combined pose plus expression, and all four eye-gaze directions.
+- [ ] Store the unmodified facial matrix, 478 landmarks, 52 blendshapes, timestamps, calibration frame, and expected mirror state in each fixture.
+- [ ] Add a development-only retarget inspector showing raw and filtered pose, neutral-relative quaternion/translation, lip aperture, mouth confidence, neck/head/eye joint values, and active GNM expression weights.
+- [ ] Capture golden vertex checksums and reference renders for desktop Rust and the web worker before changing the live pipeline.
+
+### True neck, head, eye and translation joints
+
+- [x] Add a typed `GnmJointPose` containing local neck, head, left-eye and right-eye rotations plus root translation; retain it in live frames, recorded frames, JSON, playback, popout messages and immutable take snapshots.
+- [ ] Convert the neutral-relative MediaPipe facial matrix to a continuous quaternion and reject basis/sign discontinuities before any dead zone or smoothing is applied.
+- [x] Distribute tracked orientation over GNM's neck and head hierarchy with quaternion composition so the final head orientation remains exact while the shoulders stay stable and the cervical mesh bends naturally.
+- [x] Use conservative per-axis distribution defaults, with more pitch on the head and enough yaw/roll on the neck to avoid a rigid mannequin pivot; expose advanced tuning only after the defaults are validated.
+- [x] Keep manual neck/head controls as local offsets on their corresponding GNM joints instead of multiplying both into the scene root.
+- [x] Drive GNM's left/right eye joints from calibrated iris landmarks (468-477), fused with MediaPipe eye-look blendshapes only when iris confidence is weak; preserve anatomical limits and a neutral gaze dead zone.
+- [ ] Pass real joint rotations and translation into the native Rust evaluator instead of the current four zero rotations, using a binary/typed result path that avoids JSON-serializing 17,821 vertices every tracking frame.
+- [x] Bundle the four-joint hierarchy, parent indices, skinning weights and all 36 released pose-corrective channels in the shared desktop/web GLB runtime.
+- [x] Stop applying tracked GNM orientation to `Stage`'s root quaternion after joint deformation is active; retain the existing root-based path only for avatar profiles that do not expose GNM joints.
+- [x] Preserve camera orbit independently from tracked avatar pose and verify that cardinal views, Reset view and output framing do not alter mocap joint values.
+- [x] Export actual neck/head/eye motion in animated GLB, either as the four-joint hierarchy or deterministically baked deformation, instead of exporting one combined root quaternion.
+
+### Fitted MediaPipe to 383-component facial retarget
+
+- [ ] Build a reproducible fitting dataset by sampling released GNM lower-face expressions and measuring the corresponding lip, jaw, cheek and chin geometry in normalized model space.
+- [ ] Fit and validate a constrained 52-to-383 retarget matrix, augmented by normalized inner-lip aperture, mouth width, chin distance and landmark confidence; do not rely on one randomly sampled mouth-open target.
+- [ ] Evaluate a live identity-aware 383-component expression vector per frame on desktop and web, with the eye, lower-face, tongue and iris regions kept independently controllable.
+- [x] Replace the current `min(scoreOpening, apertureOpening)` bottleneck with confidence-weighted fusion so a reliable wide landmark aperture cannot be suppressed by an under-reporting blendshape delegate.
+- [x] Separate jaw aperture from semantic `surprise` and `platysma` so one MediaPipe jaw channel cannot double-drive lower-face deformation.
+- [x] Keep the upper teeth stable and move the lower teeth and gums coherently using official anatomy; remove residual per-vertex dental stretch.
+- [x] Calibrate closed-mouth aperture and resting mouth-close pressure separately from the rest of the neutral expression so a relaxed mouth stays closed without weakening deliberate opening.
+- [ ] Add identity-aware opening limits and collision checks for the lower lip, chin, lower dental arch and gum line at half-open and fully-open poses.
+
+### Filtering, parity and acceptance
+
+- [ ] Use separate velocity-adaptive filters for translation, quaternion pose, neck/head distribution, eye gaze, jaw aperture and the remaining facial expression vector; never run joint pose through the generic landmark filter alone.
+- [ ] Preserve quaternion hemisphere continuity and use short confidence holds during one-frame landmark loss, followed by a bounded reacquisition blend instead of snapping to neutral.
+- [ ] Prove desktop Rust and web-worker parity for neutral, pose-only, expression-only and combined frames with numerical vertex tolerances and matching rendered snapshots.
+- [ ] Validate at least ten feminine, masculine and blended identities for closed mouth, half-open mouth, full opening, neck yaw/pitch/roll, eye aim and combined extreme motion.
+- [ ] Verify the same deformation in live view, pause/resume, recording, seeking, Return to Live, popout, still PNG, PNG sequence, WebM, MP4, motion JSON and animated GLB.
+- [ ] Measure sustained 30/60 FPS behavior and ensure stale evaluations are dropped rather than queued; keep tracker, evaluator and renderer ownership singular in studio and popout modes.
+
+## Future offline face-video mocap
+
+- [ ] Let users import a prerecorded face video without requiring a live camera.
+- [ ] Decode and track every source frame with MediaPipe off the UI thread, preserving source timing and optional audio.
+- [ ] Apply the recovered face, eye, head, neck and neutral-relative XYZ motion to either supported avatar for preview and editing.
+- [ ] Allow seeking, trimming, smoothing and neutral calibration before export.
+- [ ] Export the transferred result through the existing motion JSON, animated GLB, WebM, MP4 and PNG-sequence paths.
+- [ ] Cache resumable analysis results and report unsupported codecs, missing faces, dropped frames and variable-frame-rate timing clearly.
+
 ## Remaining production work
 
-- [ ] Fit a high-quality 52-to-383 MediaPipe/GNM retargeting matrix from matched landmarks.
+- [ ] Complete the MediaPipe to anatomical GNM retargeting parity pass above.
 - [x] Add non-destructive playback trimming and interpolated retiming.
 - [x] Add deterministic offline MP4 rendering at arbitrary resolution/FPS.
 - [x] Replace the center canvas with a dedicated MP4/WebM/PNG-sequence export workspace when Export is selected.

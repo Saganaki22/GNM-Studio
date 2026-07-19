@@ -1,7 +1,7 @@
 {
   "name": "gnm-studio",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.3.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,7 @@
     "build": "tsc -b && vite build",
     "build:web": "tsc -b && vite build --mode web",
     "check:web": "node tools/check_pages_build.mjs",
-    "check:assets": "node tools/check_facecap_asset.mjs && node --experimental-strip-types tools/check_gnm_eyes.mjs && node --experimental-strip-types tools/check_skin_material.mjs && node --experimental-strip-types tools/check_head_pose.mjs && node --experimental-strip-types tools/check_face_alignment.mjs && node --experimental-strip-types tools/check_web_identity.mjs && node --experimental-strip-types tools/check_web_expression.mjs && node --experimental-strip-types tools/check_full_expression_state.mjs && node --experimental-strip-types tools/check_identity_transition.mjs && node --experimental-strip-types tools/check_presets.mjs && node --experimental-strip-types tools/check_manual_joints.mjs && node --experimental-strip-types tools/check_motion_edit.mjs && node --experimental-strip-types tools/check_mouth_retarget.mjs && node --experimental-strip-types tools/check_recording_pipeline.mjs && node --experimental-strip-types tools/check_output_owner.mjs && node --experimental-strip-types tools/check_pause_resume.mjs && node --experimental-strip-types tools/check_fullscreen_controls.mjs",
+    "check:assets": "node tools/check_facecap_asset.mjs && node --experimental-strip-types tools/check_gnm_eyes.mjs && node --experimental-strip-types tools/check_skin_material.mjs && node --experimental-strip-types tools/check_head_pose.mjs && node --experimental-strip-types tools/check_face_alignment.mjs && node --experimental-strip-types tools/check_web_identity.mjs && node --experimental-strip-types tools/check_web_expression.mjs && node --experimental-strip-types tools/check_runtime_assets.mjs && node --experimental-strip-types tools/check_export_paths.mjs && node --experimental-strip-types tools/check_full_expression_state.mjs && node --experimental-strip-types tools/check_identity_transition.mjs && node --experimental-strip-types tools/check_presets.mjs && node --experimental-strip-types tools/check_manual_joints.mjs && node --experimental-strip-types tools/check_motion_edit.mjs && node --experimental-strip-types tools/check_mouth_retarget.mjs && node --experimental-strip-types tools/check_recording_pipeline.mjs && node --experimental-strip-types tools/check_output_owner.mjs && node --experimental-strip-types tools/check_pause_resume.mjs && node --experimental-strip-types tools/check_fullscreen_controls.mjs",
     "tauri": "tauri",
     "check": "npm run check:assets && npm run build && cargo check --manifest-path src-tauri/Cargo.toml",
     "test": "npm run check:assets && npm run build && cargo test --manifest-path src-tauri/Cargo.toml",

@@ -19,6 +19,7 @@ assert.ok(
   "mouthClose must continue to suppress opening",
 );
 assert.equal(semanticInfluences({ jawOpen: 1 }).surprise, 0, "jaw tracking must not also drive full-face surprise");
+assert.equal(semanticInfluences({ jawOpen: 1 }).platysma, 0, "jaw tracking must not double-drive platysma");
 assert.ok(semanticInfluences({ browInnerUp: 1 }).surprise > 0, "upper-face surprise must remain available");
 
 const frame = (timestamp, jawOpen, gap) => ({
@@ -41,5 +42,9 @@ const stageSource = await import("node:fs").then(({ readFileSync }) => readFileS
 assert.ok(stageSource.includes("frozenExpressions.jaw_open"));
 assert.ok(stageSource.includes("manualExpressions.jaw_open"));
 assert.ok(!stageSource.includes("frozenExpressions.surprise ?? Math.min"), "manual surprise must not duplicate jaw opening");
+const builderSource = await import("node:fs").then(({ readFileSync }) => readFileSync(new URL("./build_gnm_runtime.py", import.meta.url), "utf8"));
+assert.ok(builderSource.includes("anatomical_mouth_open_expression"));
+assert.ok(builderSource.includes("21-degree anatomical jaw hinge target"));
+assert.ok(!builderSource.includes("canonical_mouth_open_expression"), "jaw opening must not use the old sampled semantic expression");
 
-console.log("GNM mouth retarget verified: neutral-relative dead zone, temporal hysteresis, landmark gate, wide opening, close suppression, and single jaw drive.");
+console.log("GNM mouth retarget verified: anatomical hinge solve, constrained upper lip, rigid dental arch, neutral-relative gate, wide opening, and single jaw drive.");

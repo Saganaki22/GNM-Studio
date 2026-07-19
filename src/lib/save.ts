@@ -2,6 +2,18 @@ export type SaveResult =
   | { status: "saved"; path?: string }
   | { status: "cancelled" };
 
+function downloadBlob(blob: Blob, suggestedName: string): SaveResult {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = suggestedName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  return { status: "saved" };
+}
+
 export async function saveBytes(
   bytes: Uint8Array,
   suggestedName: string,
@@ -18,18 +30,10 @@ export async function saveBytes(
     return { status: "saved", path };
   }
 
-  const blob = new Blob([bytes.slice().buffer], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = suggestedName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-  return { status: "saved" };
+  return downloadBlob(new Blob([bytes.slice().buffer], { type: mimeType }), suggestedName);
 }
 
 export async function saveBlob(blob: Blob, suggestedName: string): Promise<SaveResult> {
+  if (!("__TAURI_INTERNALS__" in window)) return downloadBlob(blob, suggestedName);
   return saveBytes(new Uint8Array(await blob.arrayBuffer()), suggestedName, blob.type);
 }

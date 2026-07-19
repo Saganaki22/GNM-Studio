@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as THREE from "three";
 import { resolveHeadPose } from "../src/lib/headPose.ts";
+import { resolveIrisGaze, splitGnmHeadPose } from "../src/lib/gnmPose.ts";
 
 const settings = {
   enabled: true,
@@ -20,6 +22,14 @@ function frame(overrides = {}, matrix = []) {
   landmarks[152] = { x: 0.5, y: 0.75, z: 0 };
   landmarks[234] = { x: 0.3, y: 0.5, z: 0 };
   landmarks[454] = { x: 0.7, y: 0.5, z: 0 };
+  landmarks[362] = { x: 0.53, y: 0.44, z: 0 };
+  landmarks[386] = { x: 0.565, y: 0.425, z: 0 };
+  landmarks[374] = { x: 0.565, y: 0.455, z: 0 };
+  landmarks[473] = { x: 0.565, y: 0.44, z: 0 };
+  landmarks[133] = { x: 0.47, y: 0.44, z: 0 };
+  landmarks[159] = { x: 0.435, y: 0.425, z: 0 };
+  landmarks[145] = { x: 0.435, y: 0.455, z: 0 };
+  landmarks[468] = { x: 0.435, y: 0.44, z: 0 };
   for (const [index, point] of Object.entries(overrides)) landmarks[Number(index)] = { ...landmarks[Number(index)], ...point };
   return { timestamp: 1, landmarks, blendshapes: [], matrix };
 }
@@ -89,4 +99,20 @@ const cameraBasis = new THREE.Matrix4().makeRotationY(Math.PI).toArray();
 const bounded = resolveHeadPose(frame({}, cameraBasis), null, false, settings, new THREE.Quaternion());
 assert.ok(bounded.angleTo(new THREE.Quaternion()) < THREE.MathUtils.degToRad(30), "uncalibrated camera-basis rotation must not lock or flip the avatar");
 
-console.log("Head pose verified: yaw, pitch convention, single-inversion mirrored roll, neutral roll, and bounded matrix basis.");
+const requestedPose = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.24, -0.38, 0.17, "YXZ"));
+const distributed = splitGnmHeadPose(requestedPose);
+const recomposed = new THREE.Quaternion().fromArray(distributed.neck)
+  .multiply(new THREE.Quaternion().fromArray(distributed.head));
+assert.ok(recomposed.angleTo(requestedPose) < 1e-6, "neck/head distribution must preserve exact final orientation");
+assert.ok(new THREE.Quaternion().fromArray(distributed.neck).angleTo(new THREE.Quaternion()) > 0.1, "tracked pose must visibly bend the neck");
+assert.ok(new THREE.Quaternion().fromArray(distributed.head).angleTo(new THREE.Quaternion()) > 0.1, "tracked pose must retain local head motion");
+
+const gaze = resolveIrisGaze(frame({ 473: { x: 0.58 }, 468: { y: 0.45 } }), neutral);
+assert.ok(gaze.left.horizontal < -0.2, "left iris displacement must produce a directional gaze control");
+assert.ok(gaze.right.vertical > 0.2, "right iris displacement must produce a directional vertical gaze control");
+const overlaySource = readFileSync(new URL("../src/lib/trackingOverlay.ts", import.meta.url), "utf8");
+for (const marker of ["473", "468", "drawTrackingVectors", "mouth width", "arrow(context"]) {
+  assert.ok(overlaySource.includes(marker), `tracking vector overlay is missing ${marker}`);
+}
+
+console.log("Head pose verified: yaw/pitch/roll, exact neck/head distribution, iris gaze controls, and directional debug vectors.");

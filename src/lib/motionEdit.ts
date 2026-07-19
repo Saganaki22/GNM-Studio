@@ -33,6 +33,14 @@ function interpolateAvatarMotion(a: AvatarMotionSample | undefined, b: AvatarMot
     position: lerpOptionalTuple(left.position, right.position, t, 3) as [number, number, number] | undefined,
     scale: lerpOptionalTuple(left.scale, right.scale, t, 3) as [number, number, number] | undefined,
     quaternion: nlerpQuaternion(left.quaternion, right.quaternion, t),
+    gnmJoints: left.gnmJoints || right.gnmJoints
+      ? {
+          neck: nlerpQuaternion(left.gnmJoints?.neck ?? right.gnmJoints!.neck, right.gnmJoints?.neck ?? left.gnmJoints!.neck, t),
+          head: nlerpQuaternion(left.gnmJoints?.head ?? right.gnmJoints!.head, right.gnmJoints?.head ?? left.gnmJoints!.head, t),
+          leftEye: nlerpQuaternion(left.gnmJoints?.leftEye ?? right.gnmJoints!.leftEye, right.gnmJoints?.leftEye ?? left.gnmJoints!.leftEye, t),
+          rightEye: nlerpQuaternion(left.gnmJoints?.rightEye ?? right.gnmJoints!.rightEye, right.gnmJoints?.rightEye ?? left.gnmJoints!.rightEye, t),
+        }
+      : undefined,
   };
 }
 

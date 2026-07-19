@@ -15,8 +15,12 @@ const readAccessor = (accessorIndex) => {
   const accessor = gltf.accessors[accessorIndex];
   const view = gltf.bufferViews[accessor.bufferView];
   const offset = binaryStart + (view.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
-  const size = accessor.type === "VEC3" ? 3 : 1;
-  const TypedArray = accessor.componentType === 5126 ? Float32Array : Uint32Array;
+  const size = ({ SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 })[accessor.type];
+  const TypedArray = accessor.componentType === 5126
+    ? Float32Array
+    : accessor.componentType === 5123
+      ? Uint16Array
+      : Uint32Array;
   return new TypedArray(source.buffer, source.byteOffset + offset, accessor.count * size);
 };
 const positions = readAccessor(primitive.attributes.POSITION);
@@ -78,17 +82,34 @@ const [upperDentalArch, lowerDentalArch] = [...dentalArches]
   .sort((first, second) => second.y / second.count - first.y / first.count);
 assert.ok(dentalDisplacement(upperDentalArch) < 1e-7, "canonical jaw opening must leave the upper dental arch fixed");
 assert.ok(dentalDisplacement(lowerDentalArch) > 0.009, "canonical jaw opening must move the lower dental arch visibly");
-const lowerDentalDeltas = lowerDentalArch.vertices.map((vertex) => [
-  jawTarget[vertex * 3], jawTarget[vertex * 3 + 1], jawTarget[vertex * 3 + 2],
-]);
-const lowerDentalMean = lowerDentalDeltas.reduce(
-  (sum, delta) => sum.map((value, axis) => value + delta[axis]),
-  [0, 0, 0],
-).map((value) => value / lowerDentalDeltas.length);
-const lowerDentalDeviation = Math.max(...lowerDentalDeltas.map((delta) => Math.hypot(
-  delta[0] - lowerDentalMean[0], delta[1] - lowerDentalMean[1], delta[2] - lowerDentalMean[2],
-)));
-assert.ok(lowerDentalDeviation < 1e-7, "the complete lower dental arch must translate rigidly without elongated teeth");
+const point = (vertex, posed = false) => [
+  positions[vertex * 3] + (posed ? jawTarget[vertex * 3] : 0),
+  positions[vertex * 3 + 1] + (posed ? jawTarget[vertex * 3 + 1] : 0),
+  positions[vertex * 3 + 2] + (posed ? jawTarget[vertex * 3 + 2] : 0),
+];
+const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+let dentalRigidityError = 0;
+for (let index = 0; index + 37 < lowerDentalArch.vertices.length; index += 17) {
+  const first = lowerDentalArch.vertices[index];
+  const second = lowerDentalArch.vertices[index + 37];
+  dentalRigidityError = Math.max(
+    dentalRigidityError,
+    Math.abs(distance(point(first), point(second)) - distance(point(first, true), point(second, true))),
+  );
+}
+assert.ok(dentalRigidityError < 1e-6, "the complete lower dental arch must use one rigid hinge without elongated teeth");
+
+assert.ok(primitive.attributes.JOINTS_0 !== undefined && primitive.attributes.WEIGHTS_0 !== undefined, "GNM runtime must contain four-joint skin attributes");
+assert.equal(gltf.skins?.[0]?.joints.length, 4, "GNM runtime must contain its released four-joint hierarchy");
+assert.deepEqual(gltf.skins[0].joints.map((node) => gltf.nodes[node].name), ["neck", "head", "left_eye", "right_eye"]);
+const skinJoints = readAccessor(primitive.attributes.JOINTS_0);
+const skinWeights = readAccessor(primitive.attributes.WEIGHTS_0);
+for (let vertex = 0; vertex < count; vertex += 1) {
+  assert.deepEqual(Array.from(skinJoints.subarray(vertex * 4, vertex * 4 + 4)), [0, 1, 2, 3]);
+  const sum = skinWeights[vertex * 4] + skinWeights[vertex * 4 + 1] + skinWeights[vertex * 4 + 2] + skinWeights[vertex * 4 + 3];
+  assert.ok(Math.abs(sum - 1) < 1e-4, `GNM skin weights must sum to one at vertex ${vertex}`);
+}
+assert.equal(targetNames.filter((name) => name.startsWith("pose_")).length, 36, "GNM runtime must contain all pose-corrective matrix channels");
 
 const { parseGnmAnatomy } = await import("../src/lib/gnmAnatomy.ts");
 const anatomyBytes = readFileSync(fileURLToPath(new URL("../public/models/gnm_anatomy.gna", import.meta.url)));
@@ -160,6 +181,7 @@ assert.ok(gnmEyeTextureOffset("right", 0) < 0, "Right neutral iris must shift sl
 assert.equal(gnmEyeTextureOffset("left", 0.04), gnmEyeTextureOffset("left", 0), "Tiny false gaze must stay in the dead zone");
 assert.ok(gnmEyeTextureOffset("left", 0.4) < gnmEyeTextureOffset("left", 0), "Deliberate gaze must remain responsive");
 const stageSource = readFileSync(fileURLToPath(new URL("../src/components/Stage.tsx", import.meta.url)), "utf8");
+assert.ok(stageSource.includes('gnmEyeTextureOffset("left", 0), 0'), "GNM eye joints and shader UVs must not double-apply tracked gaze");
 assert.ok(stageSource.includes("installGnmEyeMaterials(face"), "GNM Stage does not install eye materials");
 assert.ok(stageSource.includes("loadGnmAnatomy()"), "GNM Stage does not load official anatomical groups");
 const exportSource = readFileSync(fileURLToPath(new URL("../src/lib/glbExport.ts", import.meta.url)), "utf8");

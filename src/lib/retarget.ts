@@ -57,9 +57,15 @@ export function mouthOpenInfluence(
     : 0.055;
   const apertureThreshold = 0.008 + normalizedDeadZone * 0.045;
   const apertureOpening = smoothstep((Math.max(0, aperture - neutralAperture) - apertureThreshold) / 0.34);
-  // Landmark aperture confirms that the lips are physically separating. Keep
-  // a little headroom for delegates whose mouth landmarks under-report depth.
-  return Math.min(clamp01(scoreOpening * 1.12), clamp01(apertureOpening * 1.25));
+  // Fuse both estimates by confidence instead of allowing the weaker delegate
+  // to cap a clearly wide physical aperture. Neutral subtraction and the
+  // stateful gate below still reject resting-mouth noise.
+  const fused = Math.max(
+    scoreOpening * 0.94,
+    apertureOpening * 1.18,
+    scoreOpening * 0.42 + apertureOpening * 0.72,
+  );
+  return clamp01(fused * (1 - clamp01(mouthClose) * 0.48));
 }
 
 export class MouthOpenGate {
@@ -130,7 +136,9 @@ export function semanticInfluences(blendshapes: Record<string, number>) {
     stretch_face: value("mouthStretchLeft", "mouthStretchRight"),
     happy: Math.min(1, average("mouthSmileLeft", "mouthSmileRight") + average("cheekSquintLeft", "cheekSquintRight") * 0.35),
     squint: value("eyeSquintLeft", "eyeSquintRight"),
-    platysma: average("mouthFrownLeft", "mouthFrownRight", "jawOpen") * 0.45,
+    // Jaw opening owns its anatomical lower-face target. Feeding jawOpen into
+    // platysma as well double-pulled the lips and chin during a wide opening.
+    platysma: Math.min(1, average("mouthFrownLeft", "mouthFrownRight") * 0.62 + (blendshapes.mouthShrugLower ?? 0) * 0.28),
     blow: blendshapes.cheekPuff ?? 0,
     funneler: blendshapes.mouthFunnel ?? 0,
     smile_wide: Math.min(1, average("mouthSmileLeft", "mouthSmileRight") + average("mouthStretchLeft", "mouthStretchRight") * 0.4),

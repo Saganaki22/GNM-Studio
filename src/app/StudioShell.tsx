@@ -223,6 +223,7 @@ export function StudioShell(props: StudioShellProps) {
         exportProps={{
           hasTake: recordedFrames.length > 0,
           hasVideo: Boolean(lastVideo),
+          videoIsWebm: Boolean(lastVideo?.type.includes("webm")),
           durationMs: recordedDuration,
           frameCount: recordedFrames.length,
           width: settings.exportWidth,

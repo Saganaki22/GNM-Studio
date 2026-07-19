@@ -51,6 +51,14 @@ function cloneTrackingFrame(frame: TrackingFrame | null) {
           position: frame.avatarMotion.position ? [...frame.avatarMotion.position] as [number, number, number] : undefined,
           scale: frame.avatarMotion.scale ? [...frame.avatarMotion.scale] as [number, number, number] : undefined,
           quaternion: [...frame.avatarMotion.quaternion] as [number, number, number, number],
+          gnmJoints: frame.avatarMotion.gnmJoints
+            ? {
+                neck: [...frame.avatarMotion.gnmJoints.neck] as [number, number, number, number],
+                head: [...frame.avatarMotion.gnmJoints.head] as [number, number, number, number],
+                leftEye: [...frame.avatarMotion.gnmJoints.leftEye] as [number, number, number, number],
+                rightEye: [...frame.avatarMotion.gnmJoints.rightEye] as [number, number, number, number],
+              }
+            : undefined,
         }
       : undefined,
     mouthOpen: frame.mouthOpen,

@@ -33,7 +33,7 @@ export interface MotionVideoRenderContext {
   };
   output: {
     beginRecording(command: OutputStartCommand): Promise<void>;
-    waitForRecordingResult(requestId: string): Promise<Blob>;
+    waitForRecordingResult(requestId: string, timeoutMs?: number): Promise<Blob>;
     stopRecording(): void;
   };
   setForcedViewState(view: CameraViewState | null): void;
@@ -55,7 +55,7 @@ export async function renderRecordedMotionVideo(
 ) {
   const {
     settings, renderFrames, appearance, recordedViewState, neutralFrame, trackingFrame, editedAudio,
-    outputOwnerPhase, getCanvas, getCurrentViewState, recording, playback, output,
+    outputOwnerPhase, restoreFrame, restoreElapsed, getCanvas, getCurrentViewState, recording, playback, output,
     setForcedViewState, setRendering, setProgress, setExportRenderSize,
   } = context;
   if (!renderFrames.length) throw new Error("The current trim range contains no motion frames.");
@@ -103,7 +103,7 @@ export async function renderRecordedMotionVideo(
         width: renderSize.width,
         height: renderSize.height,
       });
-      const completed = output.waitForRecordingResult(requestId);
+      const completed = output.waitForRecordingResult(requestId, Math.ceil(duration) + 120_000);
       const started = performance.now();
       await new Promise<void>((resolve) => {
         const tick = (now: number) => {
@@ -128,8 +128,8 @@ export async function renderRecordedMotionVideo(
     } finally {
       if (animation) cancelAnimationFrame(animation);
       setRendering(false);
-      playback.setFrame(null);
-      playback.setElapsed(duration);
+      playback.setFrame(restoreFrame);
+      playback.setElapsed(restoreElapsed);
       setForcedViewState(restoreViewState);
       await afterBrowserPaint();
       setForcedViewState(null);
@@ -217,8 +217,8 @@ export async function renderRecordedMotionVideo(
     if (renderAudioContext) await renderAudioContext.close();
     setExportRenderSize(null);
     setRendering(false);
-    playback.setFrame(null);
-    playback.setElapsed(duration);
+    playback.setFrame(restoreFrame);
+    playback.setElapsed(restoreElapsed);
     setForcedViewState(restoreViewState);
     await afterBrowserPaint();
     setForcedViewState(null);

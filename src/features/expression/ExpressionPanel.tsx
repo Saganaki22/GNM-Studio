@@ -33,6 +33,7 @@ export function ExpressionPanel({ avatarKind, avatarLabel, expressionCount, manu
   const control = (name: string) => <ExpressionControl key={name} name={name} value={name in frozen ? frozen[name] : manual[name] ?? 0} frozen={name in frozen} onChange={(value) => setManual(name, value)} onToggle={() => toggleFreeze(name)} />;
   return <section className="panel-section" data-workspace-target="edit">
     <div className="section-heading"><span>Expression</span><small>{Object.keys(frozen).length ? `${Object.keys(frozen).length} frozen` : `${expressionCount} ${avatarLabel} controls`}</small></div>
+    {avatarKind === "gnm" && control("jaw_open")}
     {avatarKind === "gnm" && semanticExpressionNames.slice(0, 6).map(control)}
     {avatarKind === "gnm" && <details className="advanced-expression"><summary><SlidersHorizontal size={15} />All semantic controls</summary>{semanticExpressionNames.slice(6).map(control)}</details>}
     {avatarKind === "gnm" && <GnmExpressionEditor semanticNames={semanticExpressionNames} semanticA={gnm.semanticA} semanticB={gnm.semanticB} seedA={gnm.seedA} seedB={gnm.seedB} blend={gnm.blend} weights={gnm.weights} frozen={gnm.frozen} ready={gnm.ready} busy={gnm.busy} backend={gnm.backend} disabled={disabled} onSemanticA={gnm.setSemanticA} onSemanticB={gnm.setSemanticB} onSeedA={gnm.setSeedA} onSeedB={gnm.setSeedB} onResampleA={gnm.resampleA} onResampleB={gnm.resampleB} onBlend={gnm.setBlend} onWeight={gnm.setWeight} onToggleFreeze={gnm.toggleFreeze} onMirror={gnm.mirror} onReset={gnm.reset} />}

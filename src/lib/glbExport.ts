@@ -16,13 +16,12 @@ import {
 } from "./facecapModel";
 import { disposeGnmEyeMaterials, installGnmEyeMaterials, type GnmEyeMaterialSet } from "./gnmEyes";
 import { loadGnmAnatomy } from "./gnmAnatomy";
+import { splitGnmHeadPose } from "./gnmPose";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   skinDisplacementScale,
   type SkinTextureSet,
 } from "./skinMaterial";
-
-const gnmMorphNames = [...semanticExpressionNames, "jaw_open"] as const;
 
 export type AnimatedGlbOptions = {
   avatarKind: AvatarKind;
@@ -141,38 +140,40 @@ export async function createAnimatedGlb(
   exportScene.name = "GNM_Studio_Capture";
   exportScene.add(performanceRoot);
   const times = new Float32Array(frames.map((frame) => frame.timestamp / 1000));
-  const morphNames = options.avatarKind === "facecap" ? facecapTargetNames : gnmMorphNames;
+  const morphNames = options.avatarKind === "facecap"
+    ? [...facecapTargetNames]
+    : Object.entries(mesh.morphTargetDictionary ?? {})
+      .sort(([, first], [, second]) => first - second)
+      .map(([name]) => name);
+  const morphIndex = new Map(morphNames.map((name, index) => [name, index]));
   const values = new Float32Array(frames.length * morphNames.length);
+  const setMorph = (frameIndex: number, name: string, value: number) => {
+    const targetIndex = morphIndex.get(name);
+    if (targetIndex !== undefined) values[frameIndex * morphNames.length + targetIndex] = value;
+  };
   frames.forEach((frame, frameIndex) => {
     if (options.avatarKind === "facecap") {
       const influences = facecapInfluences(frame.blendshapes);
-      facecapTargetNames.forEach((name, targetIndex) => {
-        values[frameIndex * morphNames.length + targetIndex] =
-          frozenExpressions[name] ?? Math.min(1, influences[name] + (manualExpressions[name] ?? 0));
+      facecapTargetNames.forEach((name) => {
+        setMorph(frameIndex, name, frozenExpressions[name] ?? Math.min(1, influences[name] + (manualExpressions[name] ?? 0)));
       });
       return;
     }
     const semantic = semanticInfluences(frame.blendshapes);
-    semanticExpressionNames.forEach((name, targetIndex) => {
-      values[frameIndex * morphNames.length + targetIndex] =
-        frozenExpressions[name] ?? Math.min(1, semantic[name] + (manualExpressions[name] ?? 0));
+    semanticExpressionNames.forEach((name) => {
+      setMorph(frameIndex, name, frozenExpressions[name] ?? Math.min(1, semantic[name] + (manualExpressions[name] ?? 0)));
     });
-    values[frameIndex * morphNames.length + semanticExpressionNames.length] =
+    setMorph(
+      frameIndex,
+      "jaw_open",
       frozenExpressions.jaw_open ?? Math.min(
         1,
         (frame.mouthOpen ?? mouthOpenInfluence(frame.blendshapes)) + (manualExpressions.jaw_open ?? 0),
-      );
+      ),
+    );
   });
 
-  const tracks: THREE.KeyframeTrack[] = [
-    new THREE.NumberKeyframeTrack(
-      `${meshName}.morphTargetInfluences`,
-      times,
-      values,
-      THREE.InterpolateLinear,
-    ),
-  ];
-  const quaternionValues = new Float32Array(frames.length * 4);
+  const tracks: THREE.KeyframeTrack[] = [];
   const jointValue = (name: string) => frozenExpressions[name] ?? manualExpressions[name] ?? 0;
   const jointLimit = THREE.MathUtils.degToRad(30);
   const neckOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
@@ -187,6 +188,36 @@ export async function createAnimatedGlb(
     jointValue("joint_head_roll") * jointLimit,
     "YXZ",
   ));
+  const eyeLimit = THREE.MathUtils.degToRad(28);
+  const leftEyeOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    jointValue("joint_left_eye_pitch") * eyeLimit,
+    jointValue("joint_left_eye_yaw") * eyeLimit,
+    0,
+    "YXZ",
+  ));
+  const rightEyeOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    jointValue("joint_right_eye_pitch") * eyeLimit,
+    jointValue("joint_right_eye_yaw") * eyeLimit,
+    0,
+    "YXZ",
+  ));
+  const rootQuaternionValues = new Float32Array(frames.length * 4);
+  const jointQuaternionValues = options.avatarKind === "gnm"
+    ? {
+        neck: new Float32Array(frames.length * 4),
+        head: new Float32Array(frames.length * 4),
+        left_eye: new Float32Array(frames.length * 4),
+        right_eye: new Float32Array(frames.length * 4),
+      }
+    : null;
+  const setPoseMorphs = (frameIndex: number, name: string, quaternion: THREE.Quaternion) => {
+    const matrix = new THREE.Matrix4().makeRotationFromQuaternion(quaternion);
+    for (let row = 0; row < 3; row += 1) {
+      for (let column = 0; column < 3; column += 1) {
+        setMorph(frameIndex, `pose_${name}_${row}${column}`, matrix.elements[column * 4 + row] - (row === column ? 1 : 0));
+      }
+    }
+  };
   let previousQuaternion: THREE.Quaternion | null = null;
   frames.forEach((frame, index) => {
     const trackingFrame: TrackingFrame = {
@@ -205,10 +236,36 @@ export async function createAnimatedGlb(
         previousQuaternion,
       );
     previousQuaternion = quaternion.clone();
-    quaternion.multiply(neckOffset).multiply(headOffset).normalize();
-    quaternion.toArray(quaternionValues, index * 4);
+    if (options.avatarKind === "gnm" && jointQuaternionValues) {
+      const tracked = frame.avatarMotion?.gnmJoints ?? splitGnmHeadPose(quaternion);
+      const local = {
+        neck: new THREE.Quaternion().fromArray(tracked.neck).multiply(neckOffset).normalize(),
+        head: new THREE.Quaternion().fromArray(tracked.head).multiply(headOffset).normalize(),
+        left_eye: new THREE.Quaternion().fromArray(tracked.leftEye).multiply(leftEyeOffset).normalize(),
+        right_eye: new THREE.Quaternion().fromArray(tracked.rightEye).multiply(rightEyeOffset).normalize(),
+      };
+      for (const [name, value] of Object.entries(local) as [keyof typeof local, THREE.Quaternion][]) {
+        value.toArray(jointQuaternionValues[name], index * 4);
+        setPoseMorphs(index, name, value);
+      }
+    } else {
+      quaternion.multiply(neckOffset).multiply(headOffset).normalize();
+      quaternion.toArray(rootQuaternionValues, index * 4);
+    }
   });
-  tracks.push(new THREE.QuaternionKeyframeTrack("GNM_Studio_Performance.quaternion", times, quaternionValues));
+  tracks.push(new THREE.NumberKeyframeTrack(
+    `${meshName}.morphTargetInfluences`,
+    times,
+    values,
+    THREE.InterpolateLinear,
+  ));
+  if (jointQuaternionValues) {
+    for (const [name, value] of Object.entries(jointQuaternionValues)) {
+      tracks.push(new THREE.QuaternionKeyframeTrack(`${name}.quaternion`, times, value));
+    }
+  } else {
+    tracks.push(new THREE.QuaternionKeyframeTrack("GNM_Studio_Performance.quaternion", times, rootQuaternionValues));
+  }
   const positionValues = new Float32Array(frames.length * 3);
   const scaleValues = new Float32Array(frames.length * 3);
   const firstPosition = frames.find((frame) => frame.avatarMotion?.position)?.avatarMotion?.position ?? [0, 0, 0];

@@ -20,6 +20,8 @@ import { identityTransitionProgress, interpolateIdentityPositions } from "../lib
 import { projectCoverPoint } from "../lib/coverProjection";
 import { neutralRelativeMatrixPosition } from "../lib/avatarMotion";
 import { loadGnmAnatomy, type GnmAnatomy } from "../lib/gnmAnatomy";
+import { eyeQuaternion, resolveIrisGaze, splitGnmHeadPose, withGnmEyePose } from "../lib/gnmPose";
+import { drawTrackingVectors } from "../lib/trackingOverlay";
 import {
   configureSkinTextureSet, disposeSkinTextureSet, loadSkinTextureSet, skinToneColor,
   skinDisplacementScale,
@@ -27,7 +29,7 @@ import {
 } from "../lib/skinMaterial";
 import type {
   AvatarKind, AvatarMotionSample, BackgroundMode, CameraViewState, FaceAlignment,
-  EyeColor, HeadPoseSettings, IdentityVertices, RecordingMode, SkinTone, TrackingFrame,
+  EyeColor, GnmJointPose, HeadPoseSettings, IdentityVertices, RecordingMode, SkinTone, TrackingFrame,
 } from "../types";
 
 type Props = {
@@ -95,6 +97,30 @@ function projectedFaceMetrics(
     centerY: (minY + maxY) / 2,
     faceHeight: Math.max(0.1, (maxY - minY) / height),
   };
+}
+
+function applyGnmJointPose(
+  face: THREE.Mesh,
+  joints: Record<"neck" | "head" | "left_eye" | "right_eye", THREE.Bone | null>,
+  pose: GnmJointPose,
+) {
+  const values = {
+    neck: new THREE.Quaternion().fromArray(pose.neck).normalize(),
+    head: new THREE.Quaternion().fromArray(pose.head).normalize(),
+    left_eye: new THREE.Quaternion().fromArray(pose.leftEye).normalize(),
+    right_eye: new THREE.Quaternion().fromArray(pose.rightEye).normalize(),
+  };
+  for (const [name, quaternion] of Object.entries(values) as [keyof typeof values, THREE.Quaternion][]) {
+    joints[name]?.quaternion.copy(quaternion);
+    const matrix = new THREE.Matrix4().makeRotationFromQuaternion(quaternion);
+    for (let row = 0; row < 3; row += 1) {
+      for (let column = 0; column < 3; column += 1) {
+        const target = face.morphTargetDictionary?.[`pose_${name}_${row}${column}`];
+        if (target === undefined || !face.morphTargetInfluences) continue;
+        face.morphTargetInfluences[target] = matrix.elements[column * 4 + row] - (row === column ? 1 : 0);
+      }
+    }
+  }
 }
 
 export function Stage({
@@ -166,6 +192,9 @@ export function Stage({
   const maxAnisotropyRef = useRef(8);
   const eyeLRef = useRef<THREE.Object3D | null>(null);
   const eyeRRef = useRef<THREE.Object3D | null>(null);
+  const gnmJointRefs = useRef<Record<"neck" | "head" | "left_eye" | "right_eye", THREE.Bone | null>>({
+    neck: null, head: null, left_eye: null, right_eye: null,
+  });
   const gnmEyeMaterialsRef = useRef<GnmEyeMaterialSet | null>(null);
   const facecapEyeMaterialsRef = useRef<FacecapEyeMaterialSet | null>(null);
   const identityTransitionFrameRef = useRef<number | null>(null);
@@ -410,6 +439,12 @@ export function Stage({
       }
       eyeLRef.current = model.getObjectByName("eyeLeft") ?? null;
       eyeRRef.current = model.getObjectByName("eyeRight") ?? null;
+      if (avatarKind === "gnm") {
+        for (const name of ["neck", "head", "left_eye", "right_eye"] as const) {
+          const joint = model.getObjectByName(name);
+          gnmJointRefs.current[name] = joint instanceof THREE.Bone ? joint : null;
+        }
+      }
       if (avatarKind === "facecap") facecapEyeMaterialsRef.current = installFacecapPupils(model);
 
       const bounds = new THREE.Box3().setFromObject(model);
@@ -526,6 +561,7 @@ export function Stage({
       skinMaterialRef.current = null;
       eyeLRef.current = null;
       eyeRRef.current = null;
+      gnmJointRefs.current = { neck: null, head: null, left_eye: null, right_eye: null };
       rootRef.current = null;
       renderer.domElement.remove();
       compositeCanvasRef.current = null;
@@ -725,9 +761,10 @@ export function Stage({
     for (const point of frame.landmarks) {
       const projected = projectCoverPoint(videoRef.current, canvas.width, canvas.height, point.x, point.y, mirror);
       context.beginPath();
-      context.arc(projected.x, projected.y, 1.05 * scale, 0, Math.PI * 2);
+      context.arc(projected.x, projected.y, 0.82 * scale, 0, Math.PI * 2);
       context.fill();
     }
+    drawTrackingVectors(context, frame, videoRef.current, canvas.width, canvas.height, mirror);
   }, [frame, mirror, showLandmarks, videoRef]);
 
   useEffect(() => {
@@ -736,6 +773,27 @@ export function Stage({
     if (!root || !face) return;
 
     const jointValue = (name: string) => frozenExpressions[name] ?? manualExpressions[name] ?? 0;
+    const blendshapes = frame?.blendshapes ?? [];
+    const scoreLookup = Object.fromEntries(blendshapes.map(({ name, score }) => [name, score]));
+    const eye = { lH: 0, rH: 0, lV: 0, rV: 0 };
+    for (const { name, score } of blendshapes) {
+      if (name === "eyeLookInLeft") eye.lH += score;
+      if (name === "eyeLookOutLeft") eye.lH -= score;
+      if (name === "eyeLookInRight") eye.rH -= score;
+      if (name === "eyeLookOutRight") eye.rH += score;
+      if (name === "eyeLookUpLeft") eye.lV -= score;
+      if (name === "eyeLookDownLeft") eye.lV += score;
+      if (name === "eyeLookUpRight") eye.rV -= score;
+      if (name === "eyeLookDownRight") eye.rV += score;
+    }
+    const iris = frame ? resolveIrisGaze(frame, neutralFrame) : null;
+    const fusedEye = {
+      lH: iris ? THREE.MathUtils.lerp(eye.lH, iris.left.horizontal, iris.left.confidence * 0.82) : eye.lH,
+      lV: iris ? THREE.MathUtils.lerp(eye.lV, iris.left.vertical, iris.left.confidence * 0.82) : eye.lV,
+      rH: iris ? THREE.MathUtils.lerp(eye.rH, iris.right.horizontal, iris.right.confidence * 0.82) : eye.rH,
+      rV: iris ? THREE.MathUtils.lerp(eye.rV, iris.right.vertical, iris.right.confidence * 0.82) : eye.rV,
+    };
+    let trackedGnmPose: GnmJointPose | null = null;
 
     if (frame?.avatarMotion) {
       const host = hostRef.current;
@@ -751,7 +809,14 @@ export function Stage({
       root.scale.setScalar(Math.max(0.1, sample.faceHeight) * 2.55);
       const pose = new THREE.Quaternion().fromArray(sample.quaternion).normalize();
       headPoseRef.current.copy(pose);
-      root.quaternion.copy(pose);
+      root.quaternion.copy(avatarKind === "gnm" ? new THREE.Quaternion() : pose);
+      if (avatarKind === "gnm") {
+        trackedGnmPose = sample.gnmJoints ?? withGnmEyePose(
+          splitGnmHeadPose(pose),
+          eyeQuaternion(iris?.left ?? { horizontal: 0, vertical: 0, confidence: 0 }, eye.lH, eye.lV),
+          eyeQuaternion(iris?.right ?? { horizontal: 0, vertical: 0, confidence: 0 }, eye.rH, eye.rV),
+        );
+      }
     } else if (frame) {
       const host = hostRef.current;
       const width = host?.clientWidth ?? 1;
@@ -772,7 +837,14 @@ export function Stage({
 
       const pose = resolveHeadPose(frame, neutralFrame, mirror, headPoseSettings, headPoseRef.current);
       headPoseRef.current.copy(pose);
-      root.quaternion.copy(pose);
+      root.quaternion.copy(avatarKind === "gnm" ? new THREE.Quaternion() : pose);
+      if (avatarKind === "gnm") {
+        trackedGnmPose = withGnmEyePose(
+          splitGnmHeadPose(pose),
+          eyeQuaternion(iris?.left ?? { horizontal: 0, vertical: 0, confidence: 0 }, eye.lH, eye.lV),
+          eyeQuaternion(iris?.right ?? { horizontal: 0, vertical: 0, confidence: 0 }, eye.rH, eye.rV),
+        );
+      }
       onAvatarMotionRef.current?.(
         {
           centerX: centerX / width,
@@ -781,6 +853,7 @@ export function Stage({
           position: relativePosition ?? [root.position.x, root.position.y, root.position.z],
           scale: [relativeScale, relativeScale, relativeScale],
           quaternion: pose.toArray() as [number, number, number, number],
+          gnmJoints: trackedGnmPose ?? undefined,
         },
         frame.timestamp,
       );
@@ -803,28 +876,38 @@ export function Stage({
       jointValue("joint_head_roll") * jointLimit,
       "YXZ",
     ));
-    root.quaternion.multiply(neckOffset).multiply(headOffset).normalize();
+    if (avatarKind === "gnm") {
+      const pose = trackedGnmPose ?? splitGnmHeadPose(new THREE.Quaternion());
+      const eyeLimit = THREE.MathUtils.degToRad(28);
+      const leftEyeOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        jointValue("joint_left_eye_pitch") * eyeLimit,
+        jointValue("joint_left_eye_yaw") * eyeLimit,
+        0,
+        "YXZ",
+      ));
+      const rightEyeOffset = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        jointValue("joint_right_eye_pitch") * eyeLimit,
+        jointValue("joint_right_eye_yaw") * eyeLimit,
+        0,
+        "YXZ",
+      ));
+      applyGnmJointPose(face, gnmJointRefs.current, {
+        neck: new THREE.Quaternion().fromArray(pose.neck).multiply(neckOffset).normalize().toArray() as [number, number, number, number],
+        head: new THREE.Quaternion().fromArray(pose.head).multiply(headOffset).normalize().toArray() as [number, number, number, number],
+        leftEye: new THREE.Quaternion().fromArray(pose.leftEye).multiply(leftEyeOffset).normalize().toArray() as [number, number, number, number],
+        rightEye: new THREE.Quaternion().fromArray(pose.rightEye).multiply(rightEyeOffset).normalize().toArray() as [number, number, number, number],
+      });
+    } else {
+      root.quaternion.multiply(neckOffset).multiply(headOffset).normalize();
+    }
     root.position.x += jointValue("joint_translate_x") * 0.65;
     root.position.y += jointValue("joint_translate_y") * 0.65;
     root.position.z += jointValue("joint_translate_z") * 0.65;
 
-    const eye = { lH: 0, rH: 0, lV: 0, rV: 0 };
-    const blendshapes = frame?.blendshapes ?? [];
-    const scoreLookup = Object.fromEntries(blendshapes.map(({ name, score }) => [name, score]));
-    for (const { name, score } of blendshapes) {
-      if (name === "eyeLookInLeft") eye.lH += score;
-      if (name === "eyeLookOutLeft") eye.lH -= score;
-      if (name === "eyeLookInRight") eye.rH -= score;
-      if (name === "eyeLookOutRight") eye.rH += score;
-      if (name === "eyeLookUpLeft") eye.lV -= score;
-      if (name === "eyeLookDownLeft") eye.lV += score;
-      if (name === "eyeLookUpRight") eye.rV -= score;
-      if (name === "eyeLookDownRight") eye.rV += score;
-    }
-    eye.lH += jointValue("joint_left_eye_yaw");
-    eye.lV += jointValue("joint_left_eye_pitch");
-    eye.rH += jointValue("joint_right_eye_yaw");
-    eye.rV += jointValue("joint_right_eye_pitch");
+    fusedEye.lH += jointValue("joint_left_eye_yaw");
+    fusedEye.lV += jointValue("joint_left_eye_pitch");
+    fusedEye.rH += jointValue("joint_right_eye_yaw");
+    fusedEye.rV += jointValue("joint_right_eye_pitch");
     const modelInfluences = avatarKind === "facecap"
       ? facecapInfluences(scoreLookup)
       : semanticInfluences(scoreLookup);
@@ -845,11 +928,14 @@ export function Stage({
       );
     }
     const limit = THREE.MathUtils.degToRad(28);
-    if (eyeLRef.current) eyeLRef.current.rotation.set(eye.lV * limit, 0, eye.lH * limit);
-    if (eyeRRef.current) eyeRRef.current.rotation.set(eye.rV * limit, 0, eye.rH * limit);
+    if (eyeLRef.current) eyeLRef.current.rotation.set(fusedEye.lV * limit, 0, fusedEye.lH * limit);
+    if (eyeRRef.current) eyeRRef.current.rotation.set(fusedEye.rV * limit, 0, fusedEye.rH * limit);
     if (avatarKind === "gnm" && gnmEyeMaterialsRef.current) {
-      gnmEyeMaterialsRef.current.textures.left.offset.set(gnmEyeTextureOffset("left", eye.lH), -eye.lV * 0.04);
-      gnmEyeMaterialsRef.current.textures.right.offset.set(gnmEyeTextureOffset("right", eye.rH), -eye.rV * 0.04);
+      // GNM now rotates its real eye joints. Keep only the small neutral optical
+      // centring offset in the shader; applying gaze to the UVs as well would
+      // double the live movement and diverge from animated GLB export.
+      gnmEyeMaterialsRef.current.textures.left.offset.set(gnmEyeTextureOffset("left", 0), 0);
+      gnmEyeMaterialsRef.current.textures.right.offset.set(gnmEyeTextureOffset("right", 0), 0);
     }
   }, [avatarKind, frame, frozenExpressions, headPoseSettings, manualExpressions, mirror, modelReady, neutralFrame, videoRef]);
 

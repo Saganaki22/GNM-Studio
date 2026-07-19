@@ -219,14 +219,14 @@ export function useOutputPopout(options: OutputPopoutOptions) {
     post({ type: "record", action: "start", ...command });
   }), [post]);
 
-  const waitForRecordingResult = useCallback((requestId: string) => new Promise<Blob>((resolve, reject) => {
+  const waitForRecordingResult = useCallback((requestId: string, timeoutMs = 30_000) => new Promise<Blob>((resolve, reject) => {
     const waiter = recordingWaitersRef.current.get(requestId) ?? {};
     waiter.resultResolve = resolve;
     waiter.resultReject = reject;
     waiter.resultTimer = window.setTimeout(() => {
       recordingWaitersRef.current.delete(requestId);
-      reject(new Error("The popout recorder did not finish encoding within 30 seconds."));
-    }, 30_000);
+      reject(new Error(`The popout recorder did not finish encoding within ${Math.ceil(timeoutMs / 1_000)} seconds.`));
+    }, timeoutMs);
     recordingWaitersRef.current.set(requestId, waiter);
   }), []);
 
