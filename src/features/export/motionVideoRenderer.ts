@@ -1,4 +1,5 @@
 import { afterBrowserPaint } from "../../lib/studioFormat";
+import { exportPixelSize } from "../../lib/canvasCapture";
 import { inspectRecordedMedia } from "../../lib/mediaInspection";
 import { preferredVideoRecorderMimeType, preferredWebmRecorderMimeType } from "../../lib/recordingMedia";
 import { playbackTrackingFrame, recordedFrameAtTime } from "../../lib/trackingFrames";
@@ -38,6 +39,7 @@ export interface MotionVideoRenderContext {
   setForcedViewState(view: CameraViewState | null): void;
   setRendering(rendering: boolean): void;
   setProgress(progress: number): void;
+  setExportRenderSize(size: { width: number; height: number } | null): void;
 }
 
 function renderQuality(settings: AppSettings) {
@@ -54,11 +56,12 @@ export async function renderRecordedMotionVideo(
   const {
     settings, renderFrames, appearance, recordedViewState, neutralFrame, trackingFrame, editedAudio,
     outputOwnerPhase, getCanvas, getCurrentViewState, recording, playback, output,
-    setForcedViewState, setRendering, setProgress,
+    setForcedViewState, setRendering, setProgress, setExportRenderSize,
   } = context;
   if (!renderFrames.length) throw new Error("The current trim range contains no motion frames.");
   const restoreViewState = getCurrentViewState();
   const quality = renderQuality(settings);
+  const renderSize = exportPixelSize(settings.exportWidth, settings.exportHeight);
   let duration = Math.max(renderFrames.at(-1)?.timestamp ?? 0, 500);
   const landmarks = appearance?.neutralFrame?.landmarks ?? neutralFrame?.landmarks ?? trackingFrame?.landmarks ?? [];
   const renderInPopout = outputOwnerPhase === "popout-ready";
@@ -97,6 +100,8 @@ export async function renderRecordedMotionVideo(
         retainedAudio: editedAudio ?? undefined,
         useLiveMicrophone: false,
         forceWebm,
+        width: renderSize.width,
+        height: renderSize.height,
       });
       const completed = output.waitForRecordingResult(requestId);
       const started = performance.now();
@@ -134,6 +139,7 @@ export async function renderRecordedMotionVideo(
   if (typeof canvas.captureStream !== "function") {
     throw new Error("This browser cannot capture the rendered avatar canvas. Use a current Chromium-based browser.");
   }
+  setExportRenderSize(renderSize);
   try {
     await afterBrowserPaint();
     stream = canvas.captureStream(settings.exportFps);
@@ -209,6 +215,7 @@ export async function renderRecordedMotionVideo(
     stream?.getTracks().forEach((track) => track.stop());
     try { renderAudioSource?.stop(); } catch { /* The source may have ended naturally. */ }
     if (renderAudioContext) await renderAudioContext.close();
+    setExportRenderSize(null);
     setRendering(false);
     playback.setFrame(null);
     playback.setElapsed(duration);
@@ -222,7 +229,7 @@ export async function renderRecordedMotionMp4(context: MotionVideoRenderContext)
   const {
     settings, renderFrames, appearance, recordedViewState, neutralFrame, trackingFrame, editedAudio,
     restoreFrame, restoreElapsed, getCanvas, getCurrentViewState, captureCurrentCanvasPng,
-    recording, playback, setForcedViewState, setRendering, setProgress,
+    recording, playback, setForcedViewState, setRendering, setProgress, setExportRenderSize,
   } = context;
   if (!renderFrames.length) throw new Error("The current trim range contains no motion frames.");
   if (renderFrames.length > 20_000) {
@@ -249,6 +256,7 @@ export async function renderRecordedMotionMp4(context: MotionVideoRenderContext)
     playback.resetSilently();
     setRendering(true);
     setForcedViewState(appearance?.viewState ?? recordedViewState ?? restoreView);
+    setExportRenderSize(exportPixelSize(settings.exportWidth, settings.exportHeight));
     recording.setVideoQuality(quality);
     playback.setFrame(playbackTrackingFrame(renderFrames[0], landmarks));
     playback.setElapsed(0);
@@ -278,6 +286,7 @@ export async function renderRecordedMotionMp4(context: MotionVideoRenderContext)
     return { video, quality };
   } finally {
     if (!completed) await encoder.cancel().catch(() => undefined);
+    setExportRenderSize(null);
     setRendering(false);
     playback.setFrame(restoreFrame);
     playback.setElapsed(restoreElapsed);

@@ -1,6 +1,7 @@
 export async function convertToMp4(
   source: Blob,
   quality: { videoBitrate: number; audioBitrate: number },
+  dimensions: { width: number; height: number },
   onProgress?: (progress: number) => void,
 ) {
   const {
@@ -41,6 +42,9 @@ export async function convertToMp4(
       video: {
         codec: "avc",
         bitrate: quality.videoBitrate,
+        width: dimensions.width,
+        height: dimensions.height,
+        fit: "contain",
         alpha: "discard",
         keyFrameInterval: 2,
         hardwareAcceleration: "prefer-hardware",

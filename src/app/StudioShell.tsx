@@ -96,7 +96,7 @@ export function StudioShell(props: StudioShellProps) {
   const { popoutState } = output;
   const {
     videoExportProgress, videoExportBackend, motionVideoRendering, pngSequenceRendering,
-    pngExportProgress, exportTrimStartMs, exportTrimEndMs, exportPlaybackSpeed,
+    pngExportProgress, exportRenderSize, exportTrimStartMs, exportTrimEndMs, exportPlaybackSpeed,
     setExportTrimStartMs, setExportTrimEndMs, setExportPlaybackSpeed, exportMotion,
     captureStill, exportWebm, exportPngSequence, exportVideo, exportWebmSource, exportGlb,
   } = exporter;
@@ -212,6 +212,7 @@ export function StudioShell(props: StudioShellProps) {
           recordingActive: motionVideoRendering || pngSequenceRendering || recordingState !== "idle",
           resetViewSignal,
           viewStateOverride: forcedViewState,
+          exportRenderSize,
           onCancelCalibration: calibration.cancel,
           onCompositeCanvas: handleCanvas,
           onStageError: handleError,

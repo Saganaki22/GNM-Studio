@@ -34,7 +34,7 @@ export type MainToOutputCommand =
   | { type: "close" }
   | { type: "shutdown" }
   | { type: "capture-png"; requestId: string; width: number; height: number }
-  | { type: "record"; action: "start"; requestId: string; fps: number; videoBitrate: number; audioBitrate: number; retainedAudio?: Blob; useLiveMicrophone: boolean; forceWebm?: boolean }
+  | { type: "record"; action: "start"; requestId: string; fps: number; videoBitrate: number; audioBitrate: number; retainedAudio?: Blob; useLiveMicrophone: boolean; forceWebm?: boolean; width?: number; height?: number }
   | { type: "record"; action: "pause" | "resume" | "stop"; requestId: string };
 
 export type MainToOutputMessage = MainToOutputCommand & { ownerId: string };

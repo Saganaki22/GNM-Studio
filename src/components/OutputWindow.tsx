@@ -23,6 +23,7 @@ export function OutputWindow() {
   const [backgroundImageUrl, setBackgroundImageUrl] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [rendererMounted, setRendererMounted] = useState(true);
+  const [exportRenderSize, setExportRenderSize] = useState<{ width: number; height: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
@@ -68,6 +69,10 @@ export function OutputWindow() {
   }, [post]);
 
   const startRecording = useCallback(async (message: Extract<MainToOutputMessage, { type: "record"; action: "start" }>) => {
+    // Offline motion renders carry explicit dimensions: reframe the stage at the
+    // export size before the stream starts so the recording is native-resolution.
+    setExportRenderSize(message.width && message.height ? { width: message.width, height: message.height } : null);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     const canvas = canvasRef.current;
     if (!canvas || typeof canvas.captureStream !== "function") throw new Error("The popout render surface is not ready for recording.");
     if (recorderRef.current && recorderRef.current.state !== "inactive") throw new Error("The popout is already recording.");
@@ -106,8 +111,9 @@ export function OutputWindow() {
     });
     chunksRef.current = [];
     recorder.ondataavailable = (event) => { if (event.data.size) chunksRef.current.push(event.data); };
-    recorder.onerror = (event) => post({ type: "error", operation: "Popout recording", message: event.type });
+    recorder.onerror = (event) => { setExportRenderSize(null); post({ type: "error", operation: "Popout recording", message: event.type }); };
     recorder.onstop = async () => {
+      setExportRenderSize(null);
       outputPhaseRef.current = "encoding";
       post({ type: "record-state", requestId: message.requestId, state: "encoding" });
       if (chunksRef.current.length) {
@@ -181,10 +187,12 @@ export function OutputWindow() {
         if (!canvas) {
           post({ type: "error", operation: "Popout PNG capture", message: "The popout render surface is not ready." });
         } else {
-          void new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+          setExportRenderSize({ width: message.width, height: message.height });
+          void new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
             .then(() => canvasPngBlob(canvas, message.width, message.height))
             .then((blob) => post({ type: "png-result", requestId: message.requestId, blob }))
-            .catch((captureError) => post({ type: "error", operation: "Popout PNG capture", message: String(captureError) }));
+            .catch((captureError) => post({ type: "error", operation: "Popout PNG capture", message: String(captureError) }))
+            .finally(() => setExportRenderSize(null));
         }
       } else if (message.type === "shutdown") {
         shutdownRequestedRef.current = true;
@@ -325,6 +333,7 @@ export function OutputWindow() {
         recordingActive={snapshot.recordingActive}
         resetViewSignal={snapshot.resetViewSignal}
         viewStateOverride={snapshot.viewState}
+        exportRenderSize={exportRenderSize}
         onCancelCalibration={() => undefined}
         onCompositeCanvas={handleCompositeCanvas}
         onStageError={handleStageError}

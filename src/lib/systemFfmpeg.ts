@@ -16,6 +16,7 @@ export async function convertWithSystemFfmpeg(
   source: Blob,
   ffmpegPath: string,
   quality: { videoBitrate: number; audioBitrate: number },
+  dimensions: { width: number; height: number },
   onProgress?: (progress: number) => void,
 ) {
   if (!("__TAURI_INTERNALS__" in window)) throw new Error("System FFmpeg requires the Tauri desktop app.");
@@ -38,6 +39,8 @@ export async function convertWithSystemFfmpeg(
       outputPath,
       videoBitrateKbps: Math.round(quality.videoBitrate / 1_000),
       audioBitrateKbps: Math.round(quality.audioBitrate / 1_000),
+      width: Math.round(dimensions.width),
+      height: Math.round(dimensions.height),
     });
     onProgress?.(0.92);
     const bytes = await readFile(outputPath);

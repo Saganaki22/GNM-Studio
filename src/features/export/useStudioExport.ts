@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { isWebEdition } from "../../app/studioConfig";
 import { createAnimatedGlb } from "../../lib/glbExport";
 import { avatarProfiles } from "../../lib/avatarProfiles";
-import { canvasPngBlob } from "../../lib/canvasCapture";
+import { canvasPngBlob, exportPixelSize } from "../../lib/canvasCapture";
 import { createStoredZip } from "../../lib/zipStore";
 import { saveBlob, saveBytes, type SaveResult } from "../../lib/save";
 import { serializableRecordedTakeSnapshot } from "../../lib/recordingAppearance";
@@ -76,6 +76,9 @@ export function useStudioExport(options: StudioExportOptions) {
   const [exportTrimStartMs, setExportTrimStartMs] = useState(0);
   const [exportTrimEndMs, setExportTrimEndMs] = useState(0);
   const [exportPlaybackSpeed, setExportPlaybackSpeed] = useState(1);
+  const [exportRenderSize, setExportRenderSize] = useState<{ width: number; height: number } | null>(null);
+
+  const evenExportRenderSize = () => exportPixelSize(settings.exportWidth, settings.exportHeight);
 
   useEffect(() => {
     const duration = recordedFrames.at(-1)?.timestamp ?? 0;
@@ -149,6 +152,7 @@ export function useStudioExport(options: StudioExportOptions) {
       setForcedViewState,
       setRendering: setMotionVideoRendering,
       setProgress: setVideoExportProgress,
+      setExportRenderSize,
     };
   };
 
@@ -172,12 +176,15 @@ export function useStudioExport(options: StudioExportOptions) {
   };
 
   const captureStill = async () => {
+    setExportRenderSize(evenExportRenderSize());
     try {
       const png = await captureCurrentCanvasPng();
       const result = await saveBlob(png, timestampedFilename("png", "_still"));
       showSaveResult("Canvas photo saved", "The exact visible canvas PNG", result);
     } catch (error) {
       setDeviceError(`Canvas photo failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setExportRenderSize(null);
     }
   };
 
@@ -198,7 +205,8 @@ export function useStudioExport(options: StudioExportOptions) {
         webm = rendered.video;
       }
       if (!webm.type.includes("webm")) throw new Error(`The available browser encoder returned ${webm.type || "an unknown container"} instead of WebM.`);
-      const result = await saveBlob(webm, timestampedFilename("webm"));
+      const { remuxWebmWithDuration } = await import("../../lib/webmRemux");
+      const result = await saveBlob(await remuxWebmWithDuration(webm), timestampedFilename("webm"));
       showSaveResult("WebM export complete", "The WebM recording", result);
     } catch (error) {
       setDeviceError(`WebM export failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -232,6 +240,7 @@ export function useStudioExport(options: StudioExportOptions) {
     setPngSequenceRendering(true);
     setPngExportProgress(0);
     setForcedViewState(appearance?.viewState ?? recordedViewState ?? restoreView);
+    setExportRenderSize(evenExportRenderSize());
     try {
       pushToast({ type: "info", title: "Rendering PNG sequence", message: `${frameCount.toLocaleString()} frames will be rendered at ${fps} FPS and packed into one ZIP.`, duration: 7_000 });
       await afterBrowserPaint();
@@ -263,6 +272,7 @@ export function useStudioExport(options: StudioExportOptions) {
     } catch (error) {
       setDeviceError(`PNG sequence export failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
+      setExportRenderSize(null);
       setPngSequenceRendering(false);
       setPngExportProgress(null);
       playback.setFrame(restoreFrame);
@@ -339,7 +349,13 @@ export function useStudioExport(options: StudioExportOptions) {
             duration: 7_000,
           });
           const { convertWithSystemFfmpeg } = await import("../../lib/systemFfmpeg");
-          video = await convertWithSystemFfmpeg(video, settings.ffmpegPath, quality, setVideoExportProgress);
+          video = await convertWithSystemFfmpeg(
+            video,
+            settings.ffmpegPath,
+            quality,
+            { width: settings.exportWidth, height: settings.exportHeight },
+            setVideoExportProgress,
+          );
         } else {
           setVideoExportBackend("webcodecs");
           pushToast({
@@ -352,6 +368,7 @@ export function useStudioExport(options: StudioExportOptions) {
           video = await convertToMp4(
             video,
             quality,
+            { width: settings.exportWidth, height: settings.exportHeight },
             renderedFromMotion
               ? (progress: number) => setVideoExportProgress(0.45 + progress * 0.55)
               : setVideoExportProgress,
@@ -374,7 +391,8 @@ export function useStudioExport(options: StudioExportOptions) {
   const exportWebmSource = async () => {
     if (!lastVideo || lastVideo.type.includes("mp4")) return;
     try {
-      const result = await saveBlob(lastVideo, timestampedFilename("webm", "_source"));
+      const { remuxWebmWithDuration } = await import("../../lib/webmRemux");
+      const result = await saveBlob(await remuxWebmWithDuration(lastVideo), timestampedFilename("webm", "_source"));
       showSaveResult("WebM source saved", "The unconverted source recording", result);
     } catch (error) {
       setDeviceError(`WebM source export failed: ${String(error)}`);
@@ -432,6 +450,7 @@ export function useStudioExport(options: StudioExportOptions) {
     motionVideoRendering,
     pngSequenceRendering,
     pngExportProgress,
+    exportRenderSize,
     exportTrimStartMs,
     exportTrimEndMs,
     exportPlaybackSpeed,

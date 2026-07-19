@@ -67,6 +67,7 @@ type Props = {
   recordingActive: boolean;
   resetViewSignal: number;
   viewStateOverride?: CameraViewState | null;
+  exportRenderSize?: { width: number; height: number } | null;
   onCancelCalibration: () => void;
   onCompositeCanvas: (canvas: HTMLCanvasElement | null) => void;
   onStageError: (message: string) => void;
@@ -133,6 +134,7 @@ export function Stage({
   recordingActive,
   resetViewSignal,
   viewStateOverride,
+  exportRenderSize,
   onCancelCalibration,
   onCompositeCanvas,
   onStageError,
@@ -153,6 +155,8 @@ export function Stage({
   const controlsRef = useRef<OrbitControls | null>(null);
   const mouseLightRef = useRef<THREE.PointLight | null>(null);
   const opacityRef = useRef(opacity);
+  const exportRenderSizeRef = useRef<{ width: number; height: number } | null>(exportRenderSize ?? null);
+  const resizeStageRef = useRef<(() => void) | null>(null);
   const [mouseLightBound, setMouseLightBound] = useState(true);
   const mouseLightBoundRef = useRef(true);
   const faceRef = useRef<THREE.Mesh | null>(null);
@@ -335,11 +339,17 @@ export function Stage({
     renderer.domElement.addEventListener("pointermove", moveMouseLight);
 
     const resize = () => {
-      const { clientWidth: width, clientHeight: height } = host;
-      onViewportResize?.(width, height);
+      const { clientWidth: hostWidth, clientHeight: hostHeight } = host;
+      const override = exportRenderSizeRef.current;
+      const width = override?.width ?? hostWidth;
+      const height = override?.height ?? hostHeight;
+      if (!override) onViewportResize?.(width, height);
+      // Export renders draw at the exact requested pixel size so captures are
+      // native-resolution reframes of the scene, never stretched viewport dumps.
+      renderer.setPixelRatio(override ? 1 : Math.min(devicePixelRatio, 2));
       renderer.setSize(width, height, false);
-      compositeCanvas.width = Math.max(2, Math.round(width * devicePixelRatio));
-      compositeCanvas.height = Math.max(2, Math.round(height * devicePixelRatio));
+      compositeCanvas.width = override ? width : Math.max(2, Math.round(width * devicePixelRatio));
+      compositeCanvas.height = override ? height : Math.max(2, Math.round(height * devicePixelRatio));
       const aspect = width / Math.max(1, height);
       camera.left = -aspect;
       camera.right = aspect;
@@ -348,12 +358,13 @@ export function Stage({
       camera.updateProjectionMatrix();
       const canvas = landmarkRef.current;
       if (canvas) {
-        canvas.width = Math.round(width * devicePixelRatio);
-        canvas.height = Math.round(height * devicePixelRatio);
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
+        canvas.width = override ? width : Math.round(width * devicePixelRatio);
+        canvas.height = override ? height : Math.round(height * devicePixelRatio);
+        canvas.style.width = `${hostWidth}px`;
+        canvas.style.height = `${hostHeight}px`;
       }
     };
+    resizeStageRef.current = resize;
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     resize();
@@ -491,6 +502,7 @@ export function Stage({
 
     return () => {
       stageDisposed = true;
+      resizeStageRef.current = null;
       cancelAnimationFrame(animationId);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerdown", chooseLeftGesture, true);
@@ -520,6 +532,11 @@ export function Stage({
       onCompositeCanvas(null);
     };
   }, [avatarKind, onCompositeCanvas, onStageError, onViewportResize, videoRef]);
+
+  useEffect(() => {
+    exportRenderSizeRef.current = exportRenderSize ?? null;
+    resizeStageRef.current?.();
+  }, [exportRenderSize]);
 
   useEffect(() => {
     updateGnmEyeMaterials(gnmEyeMaterialsRef.current, eyeShaderEnabled, eyeColor);

@@ -154,6 +154,16 @@ Detailed design: [V1.1.0_PLAN.md](V1.1.0_PLAN.md)
 - [x] User-test the portable build before commit, tag, push, and release.
 - [x] Rebuild and launch-smoke both standard and UPX portable packages after documentation freeze.
 
+## Version 1.3.0
+
+- [x] Complete the feature-based app composition refactor with pre/post safety branches.
+- [x] Keep a single stage renderer across the studio and output popout with crash-safe recovery.
+- [x] Render photo, PNG-sequence, WebM, and MP4 exports at the exact configured resolution without stretching or letterboxing.
+- [x] Scale and pad system-FFmpeg and WebCodecs MP4 conversions to even export dimensions (fix odd-height libx264 failures).
+- [x] Remux WebM exports so the saved files carry correct duration metadata in every player.
+- [x] Enlarge the GNM procedural iris and pupil by 25% in the eye shader only.
+- [x] Document the hands-on runtime smoke-test checklist for release acceptance.
+
 ## Next deformation and recording-correctness pass
 
 ### Fullscreen output controls

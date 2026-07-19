@@ -59,8 +59,8 @@ function drawEyeTexture(canvas: HTMLCanvasElement, enabled: boolean, color: EyeC
   const palette = eyeColorPalette(color);
   const x = canvas.width / 2;
   const y = canvas.height / 2;
-  const irisRadius = 33.35; // 15% larger than the previous GNM hazel iris.
-  const pupilRadius = 14; // Preserve the existing black-pupil angle.
+  const irisRadius = 41.69; // 25% larger than the previous GNM iris.
+  const pupilRadius = 17.5; // 25% larger, preserving the iris-to-pupil ratio.
 
   // Low-contrast peripheral vessels keep the sclera from looking like plain
   // white plastic. The deterministic curves avoid texture flicker on redraw.

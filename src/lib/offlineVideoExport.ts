@@ -1,3 +1,5 @@
+import { drawCanvasContained } from "./canvasCapture";
+
 export type OfflineVideoEncoder = {
   addCanvasFrame: (canvas: HTMLCanvasElement, frameIndex: number) => Promise<void>;
   finalize: () => Promise<Blob>;
@@ -56,7 +58,7 @@ export async function createOfflineMp4Encoder(options: {
     async addCanvasFrame(sourceCanvas, frameIndex) {
       if (finalized) throw new Error("The offline MP4 encoder is already finalized.");
       context.clearRect(0, 0, encodeCanvas.width, encodeCanvas.height);
-      context.drawImage(sourceCanvas, 0, 0, encodeCanvas.width, encodeCanvas.height);
+      drawCanvasContained(context, sourceCanvas, encodeCanvas.width, encodeCanvas.height);
       const duration = 1 / options.fps;
       await video.add(frameIndex * duration, duration, { keyFrame: frameIndex % Math.max(1, Math.round(options.fps * 2)) === 0 });
     },

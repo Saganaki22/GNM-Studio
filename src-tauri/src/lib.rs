@@ -121,6 +121,8 @@ fn ffmpeg_transcode(
     output_path: String,
     video_bitrate_kbps: u32,
     audio_bitrate_kbps: u32,
+    width: u32,
+    height: u32,
 ) -> Result<(), String> {
     if !(1_000..=50_000).contains(&video_bitrate_kbps) {
         return Err("Video bitrate must be between 1,000 and 50,000 kbps.".into());
@@ -128,12 +130,24 @@ fn ffmpeg_transcode(
     if !(64..=320).contains(&audio_bitrate_kbps) {
         return Err("Audio bitrate must be between 64 and 320 kbps.".into());
     }
+    if !(64..=7_680).contains(&width) || !(64..=4_320).contains(&height) {
+        return Err("Export dimensions must stay within 64-7680 x 64-4320 pixels.".into());
+    }
     let input = validate_temp_media_path(&input_path, "webm", true)?;
     let output = validate_temp_media_path(&output_path, "mp4", false)?;
     if output.exists() {
         std::fs::remove_file(&output).map_err(|error| format!("Could not replace the temporary MP4: {error}"))?;
     }
 
+    // libx264 with yuv420p rejects odd dimensions, and viewport-sized recordings
+    // keep whatever aspect the canvas had. Fit the source inside the requested
+    // export frame (pillar/letterbox) so the result is always the exact even
+    // export size instead of a stretched or un-encodable viewport dump.
+    let width = width - (width % 2);
+    let height = height - (height % 2);
+    let video_filter = format!(
+        "scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+    );
     let video_bitrate = format!("{video_bitrate_kbps}k");
     let audio_bitrate = format!("{audio_bitrate_kbps}k");
     let result = quiet_command(ffmpeg_path.trim())
@@ -142,6 +156,7 @@ fn ffmpeg_transcode(
         .args(["-loglevel", "error", "-y", "-i"])
         .arg(&input)
         .args(["-map", "0:v:0", "-map", "0:a:0?"])
+        .args(["-vf", &video_filter])
         .args(["-c:v", "libx264", "-preset", "veryfast", "-b:v"])
         .arg(video_bitrate)
         .args(["-pix_fmt", "yuv420p", "-fps_mode", "passthrough"])
@@ -194,6 +209,8 @@ mod ffmpeg_tests {
             output.to_string_lossy().into_owned(),
             2_000,
             128,
+            320,
+            240,
         );
         let output_size = std::fs::metadata(&output).map(|item| item.len()).unwrap_or(0);
         let _ = std::fs::remove_file(&input);
