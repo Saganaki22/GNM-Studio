@@ -30,7 +30,7 @@ assert.equal((renderSource.match(/playback\.setElapsed\(restoreElapsed\)/g) ?? [
 
 const workspaceSource = readFileSync(new URL("../src/components/ExportWorkspace.tsx", import.meta.url), "utf8");
 assert.ok(workspaceSource.includes("props.hasTake || props.videoIsWebm"), "MP4-only takes must not advertise an impossible WebM export");
-assert.ok(workspaceSource.includes('format === "png"\n    ? props.hasTake'), "Video-only takes must not advertise an impossible PNG sequence");
+assert.match(workspaceSource, /format === "png"\s*\? props\.hasTake/, "Video-only takes must not advertise an impossible PNG sequence");
 assert.ok(workspaceSource.includes("Recorded source dimensions"), "Baked video must not claim that ignored render dimensions were applied");
 
 const studioExportSource = readFileSync(new URL("../src/features/export/useStudioExport.ts", import.meta.url), "utf8");

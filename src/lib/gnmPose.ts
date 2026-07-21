@@ -77,9 +77,12 @@ export function resolveIrisGaze(frame: TrackingFrame, neutral: TrackingFrame | n
 export function splitGnmHeadPose(total: THREE.Quaternion): GnmJointPose {
   const euler = new THREE.Euler().setFromQuaternion(total, "YXZ");
   const neck = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-    euler.x * 0.32,
-    euler.y * 0.46,
-    euler.z * 0.40,
+    // Let the neck support the turn while the head remains the primary
+    // articulation. The former 40-46% neck share visibly folded the cervical
+    // mesh sideways and made a deliberate turn read as a bent neck.
+    euler.x * 0.22,
+    euler.y * 0.20,
+    euler.z * 0.12,
     "YXZ",
   ));
   // Preserve the exact requested world-space head orientation despite the

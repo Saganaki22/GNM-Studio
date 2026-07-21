@@ -39,16 +39,30 @@ function landmarkEuler(frame: TrackingFrame, neutral: TrackingFrame | null) {
   );
 }
 
-function matrixQuaternion(frame: TrackingFrame, neutral: TrackingFrame | null) {
+function matrixEuler(frame: TrackingFrame, neutral: TrackingFrame | null) {
   if (frame.matrix.length !== 16) return null;
-  const quaternion = new THREE.Quaternion();
-  new THREE.Matrix4().fromArray(frame.matrix).decompose(new THREE.Vector3(), quaternion, new THREE.Vector3());
+  const decompose = (matrix: number[]) => {
+    const quaternion = new THREE.Quaternion();
+    new THREE.Matrix4().fromArray(matrix).decompose(
+      new THREE.Vector3(), quaternion, new THREE.Vector3(),
+    );
+    return new THREE.Euler().setFromQuaternion(quaternion.normalize(), "XYZ");
+  };
+  const source = decompose(frame.matrix);
   if (neutral?.matrix.length === 16) {
-    const neutralQuaternion = new THREE.Quaternion();
-    new THREE.Matrix4().fromArray(neutral.matrix).decompose(new THREE.Vector3(), neutralQuaternion, new THREE.Vector3());
-    quaternion.premultiply(neutralQuaternion.invert());
+    const baseline = decompose(neutral.matrix);
+    // Remove calibration in MediaPipe's own axes before remapping them. A
+    // quaternion delta in display space couples source Z yaw into another
+    // axis and was the reason calibrated left/right turns disappeared.
+    source.set(
+      angleDelta(source.x, baseline.x),
+      angleDelta(source.y, baseline.y),
+      angleDelta(source.z, baseline.z),
+      "XYZ",
+    );
   }
-  return quaternion.normalize();
+  // MediaPipe facial matrix axes: X = pitch, Z = yaw, -Y = roll.
+  return new THREE.Euler(source.x, source.z, -source.y, "XYZ");
 }
 
 function deadZone(value: number, threshold: number) {
@@ -64,7 +78,7 @@ export function resolveHeadPose(
   previous?: THREE.Quaternion | null,
 ) {
   if (!settings.enabled) return new THREE.Quaternion();
-  const matrixPose = matrixQuaternion(frame, neutral);
+  const matrixPose = matrixEuler(frame, neutral);
   const fallbackEuler = landmarkEuler(frame, neutral);
   const hasNeutralMatrix = neutral?.matrix.length === 16;
   // MediaPipe's uncalibrated matrix contains its camera/model coordinate-basis
@@ -72,16 +86,20 @@ export function resolveHeadPose(
   // 75 degrees from identity, causing the old jump guard to reject every frame.
   // Landmarks provide a stable face-only pose until a neutral matrix exists.
   let sourceEuler = matrixPose && hasNeutralMatrix
-    ? new THREE.Euler().setFromQuaternion(matrixPose, "XYZ")
+    ? matrixPose
     : fallbackEuler;
 
   if (matrixPose && hasNeutralMatrix) {
     const safeAxis = (matrixValue: number, fallbackValue: number) => {
       if (!Number.isFinite(matrixValue)) return fallbackValue;
-      const disagreement = Math.abs(THREE.MathUtils.euclideanModulo(matrixValue - fallbackValue + Math.PI, Math.PI * 2) - Math.PI);
-      return disagreement > THREE.MathUtils.degToRad(50) && Math.abs(fallbackValue) > 0.04
+      const fallbackActive = Math.abs(fallbackValue) > THREE.MathUtils.degToRad(2);
+      if (!fallbackActive) return matrixValue;
+      const oppositeDirection = Math.abs(matrixValue) > THREE.MathUtils.degToRad(1)
+        && Math.sign(matrixValue) !== Math.sign(fallbackValue);
+      const alignedMatrix = oppositeDirection ? -matrixValue : matrixValue;
+      return Math.abs(alignedMatrix) < Math.abs(fallbackValue) * 0.45
         ? fallbackValue
-        : matrixValue;
+        : alignedMatrix;
     };
     const responsivePitch = (matrixValue: number, fallbackValue: number) => {
       if (!Number.isFinite(matrixValue)) return fallbackValue;
@@ -99,10 +117,7 @@ export function resolveHeadPose(
     sourceEuler = new THREE.Euler(
       responsivePitch(sourceEuler.x, fallbackEuler.x),
       safeAxis(sourceEuler.y, fallbackEuler.y),
-      // Eye-line roll is stable and already in display coordinates. Matrix
-      // roll conventions vary between MediaPipe delegates and could otherwise
-      // receive the mirror inversion twice after neutral calibration.
-      fallbackEuler.z,
+      safeAxis(sourceEuler.z, fallbackEuler.z),
       "XYZ",
     );
   }

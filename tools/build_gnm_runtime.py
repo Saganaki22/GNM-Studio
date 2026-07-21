@@ -80,65 +80,22 @@ def semantic_expressions() -> np.ndarray:
     return parameters
 
 
-def anatomical_mouth_open_expression(model: np.lib.npyio.NpzFile) -> np.ndarray:
-    """Solve a jaw opening directly in GNM's released lower-face basis.
+def canonical_mouth_open_expression() -> np.ndarray:
+    """Return the deterministic lower-face opening shipped by v1.3.0.
 
-    This is intentionally not a decoder-generated semantic expression.  Build
-    a 21-degree anatomical jaw hinge target, constrain the upper lip against
-    forward protrusion, then fit components 200..349 with ridge least squares.
+    This released GNM expression-decoder sample was selected for a clear lip
+    gap, stable upper dental arch, and bounded chin displacement. Eye, tongue,
+    and iris regions stay zero so jaw tracking drives only the learned
+    lower-face basis.
     """
-    names = [str(name) for name in model["vertex_group_names"]]
-    groups = np.asarray(model["vertex_groups"]) > 0.5
-    vertices = np.asarray(model["template_vertex_positions"], dtype=np.float64)
-    lower_basis = np.asarray(model["expression_basis"], dtype=np.float64)[200:350]
-    target_sum = np.zeros_like(vertices)
-    target_weight = np.zeros(len(vertices), dtype=np.float64)
-
-    def members(name: str) -> np.ndarray:
-        if name not in names:
-            raise RuntimeError(f"GNM anatomy is missing required vertex group {name}")
-        return groups[names.index(name)]
-
-    def constrain(name: str, delta: np.ndarray, weight: float) -> None:
-        selected = members(name)
-        values = delta[selected] if delta.shape == vertices.shape else delta
-        target_sum[selected] += values * weight
-        target_weight[selected] += weight
-
-    hinge = np.array([0.0, 0.2378, 0.0720], dtype=np.float64)
-    angle = np.deg2rad(21.0)
-    rotation = np.array([
-        [1.0, 0.0, 0.0],
-        [0.0, np.cos(angle), -np.sin(angle)],
-        [0.0, np.sin(angle), np.cos(angle)],
-    ])
-    jaw_delta = (vertices - hinge) @ rotation.T - (vertices - hinge)
-    constrain("lower_teeth_and_gums", jaw_delta, 12.0)
-    constrain("chin_region", jaw_delta, 8.0)
-    constrain("lower_lip_region", jaw_delta * 0.90, 7.0)
-    constrain("lower_lip", jaw_delta, 10.0)
-    mouth_sock_weight = np.clip((0.240 - vertices[:, 1]) / 0.035, 0.0, 1.0)[:, None]
-    constrain("mouth_sock", jaw_delta * mouth_sock_weight * 0.80, 3.0)
-    constrain("left_cheek_region", jaw_delta * 0.22, 1.0)
-    constrain("right_cheek_region", jaw_delta * 0.22, 1.0)
-    # The strong upper-lip constraint directly fixes the former protrusion.
-    constrain("upper_lip", np.array([0.0, 0.0015, -0.0007]), 50.0)
-    constrain("upper_teeth_and_gums", np.zeros(3), 20.0)
-
-    selected = np.flatnonzero(target_weight)
-    targets = target_sum[selected] / target_weight[selected, None]
-    weights = np.repeat(np.sqrt(target_weight[selected])[:, None], 3, axis=1).reshape(-1)
-    design = lower_basis[:, selected, :].transpose(1, 2, 0).reshape(-1, 150)
-    weighted_design = design * weights[:, None]
-    weighted_targets = targets.reshape(-1) * weights
-    regularisation = np.sqrt(1e-3) * np.eye(150)
-    coefficients = np.linalg.lstsq(
-        np.vstack([weighted_design, regularisation]),
-        np.concatenate([weighted_targets, np.zeros(150)]),
-        rcond=None,
-    )[0]
-    parameters = np.zeros(383, dtype=np.float32)
-    parameters[200:350] = coefficients.astype(np.float32)
+    rng = np.random.default_rng(0x474E4D)
+    latent = rng.normal(size=(303, 64)).astype(np.float32)[302]
+    inputs = np.zeros((1, 64 + len(EXPRESSION_LABELS)), dtype=np.float32)
+    inputs[0, :64] = latent
+    inputs[0, 64 + EXPRESSION_LABELS.index("surprise")] = 1.0
+    parameters = decode_expression_inputs(inputs)[0]
+    parameters[:200] = 0.0
+    parameters[350:] = 0.0
     return parameters
 
 
@@ -197,9 +154,9 @@ def stabilize_mouth_open_delta(
     vertex_group_names: np.ndarray,
     vertex_groups: np.ndarray,
 ) -> np.ndarray:
-    """Strengthen learned opening with official anatomy and collision limits."""
+    """Apply the v1.3.0 mouth scaling and dental collision limits."""
     source = np.asarray(delta, dtype=np.float32)
-    result = source.copy()
+    result = source * np.float32(1.30)
     names = [str(name) for name in vertex_group_names]
     def members(name: str) -> np.ndarray:
         if name not in names:
@@ -208,18 +165,19 @@ def stabilize_mouth_open_delta(
 
     upper = members("upper_teeth_and_gums")
     lower = members("lower_teeth_and_gums")
+    chin = members("chin_region")
     result[upper] = 0.0
-    # Enforce one rigid hinge transform for the complete lower dental arch.
-    # This preserves every tooth/gum relationship instead of stretching or
-    # translating individual vertices by an averaged procedural delta.
-    hinge = np.array([0.0, 0.2378, 0.0720], dtype=np.float32)
-    angle = np.deg2rad(21.0)
-    rotation = np.array([
-        [1.0, 0.0, 0.0],
-        [0.0, np.cos(angle), -np.sin(angle)],
-        [0.0, np.sin(angle), np.cos(angle)],
-    ], dtype=np.float32)
-    result[lower] = (vertices[lower] - hinge) @ rotation.T - (vertices[lower] - hinge)
+    # Move the complete lower teeth/gum island by one translation so enamel is
+    # never stretched, exactly matching the last known-good remote runtime.
+    lower_translation = source[lower].mean(axis=0) * np.float32(1.80)
+    chin_top = float(np.max(vertices[chin, 1] + result[chin, 1]))
+    dental_bottom = float(np.min(vertices[lower, 1]))
+    minimum_clearance = 0.0015
+    lower_translation[1] = max(
+        float(lower_translation[1]),
+        chin_top + minimum_clearance - dental_bottom,
+    )
+    result[lower] = lower_translation
     return result
 
 
@@ -432,7 +390,7 @@ def main() -> None:
     semantic_parameters = semantic_expressions()
     semantic_deltas = np.einsum("se,evc->svc", semantic_parameters, expression_basis, optimize=True)
     mouth_open_delta = np.einsum(
-        "e,evc->vc", anatomical_mouth_open_expression(model), expression_basis, optimize=True,
+        "e,evc->vc", canonical_mouth_open_expression(), expression_basis, optimize=True,
     )
     mouth_open_delta = stabilize_mouth_open_delta(
         vertices,

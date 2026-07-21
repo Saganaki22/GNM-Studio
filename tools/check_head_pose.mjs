@@ -78,6 +78,32 @@ const calibratedContradictoryPitch = new THREE.Euler().setFromQuaternion(resolve
 ));
 assert.ok(calibratedContradictoryPitch.x > 0, "a contradictory matrix axis must not invert deliberate pitch");
 
+const calibratedYaw = new THREE.Euler().setFromQuaternion(resolveHeadPose(
+  frame({ 1: { x: 0.57 } }, new THREE.Matrix4().makeRotationZ(0.4).toArray()),
+  frame({}, identityMatrix),
+  false,
+  settings,
+));
+assert.ok(calibratedYaw.y > 0.3, "MediaPipe source Z must drive calibrated avatar yaw");
+assert.ok(Math.abs(calibratedYaw.x) < 0.05, "calibrated yaw must not leak into pitch");
+
+const calibratedPitch = new THREE.Euler().setFromQuaternion(resolveHeadPose(
+  frame({ 1: { y: 0.58 } }, new THREE.Matrix4().makeRotationX(0.32).toArray()),
+  frame({}, identityMatrix),
+  false,
+  settings,
+));
+assert.ok(calibratedPitch.x > 0.25, "MediaPipe source X must drive calibrated avatar pitch");
+assert.ok(Math.abs(calibratedPitch.y) < 0.05, "calibrated pitch must not leak into yaw");
+
+const calibratedMatrixRoll = new THREE.Euler().setFromQuaternion(resolveHeadPose(
+  frame({}, new THREE.Matrix4().makeRotationY(-0.28).toArray()),
+  frame({}, identityMatrix),
+  false,
+  settings,
+));
+assert.ok(calibratedMatrixRoll.z > 0.2, "negative MediaPipe source Y must drive positive avatar roll");
+
 const rolled = frame({ 33: { y: 0.48 }, 263: { y: 0.40 } });
 const roll = new THREE.Euler().setFromQuaternion(resolveHeadPose(rolled, neutral, false, settings));
 assert.ok(roll.z > THREE.MathUtils.degToRad(5), "image-space counter-clockwise tilt must produce positive Three.js roll");
@@ -104,8 +130,18 @@ const distributed = splitGnmHeadPose(requestedPose);
 const recomposed = new THREE.Quaternion().fromArray(distributed.neck)
   .multiply(new THREE.Quaternion().fromArray(distributed.head));
 assert.ok(recomposed.angleTo(requestedPose) < 1e-6, "neck/head distribution must preserve exact final orientation");
-assert.ok(new THREE.Quaternion().fromArray(distributed.neck).angleTo(new THREE.Quaternion()) > 0.1, "tracked pose must visibly bend the neck");
+assert.ok(new THREE.Quaternion().fromArray(distributed.neck).angleTo(new THREE.Quaternion()) > 0.04, "tracked pose must visibly move the neck");
 assert.ok(new THREE.Quaternion().fromArray(distributed.head).angleTo(new THREE.Quaternion()) > 0.1, "tracked pose must retain local head motion");
+
+const pitchDistribution = splitGnmHeadPose(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0, 0, "YXZ")));
+const neckPitch = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().fromArray(pitchDistribution.neck), "YXZ");
+assert.ok(neckPitch.x > 0.08 && neckPitch.x < 0.1, "neck must support pitch without taking over the head motion");
+const yawDistribution = splitGnmHeadPose(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0.4, 0, "YXZ")));
+const neckYaw = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().fromArray(yawDistribution.neck), "YXZ");
+assert.ok(neckYaw.y > 0.07 && neckYaw.y < 0.09, "neck must support yaw without folding sideways");
+const rollDistribution = splitGnmHeadPose(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.4, "YXZ")));
+const neckRoll = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().fromArray(rollDistribution.neck), "YXZ");
+assert.ok(neckRoll.z > 0.04 && neckRoll.z < 0.06, "neck roll must stay subtle while the head carries the tilt");
 
 const gaze = resolveIrisGaze(frame({ 473: { x: 0.58 }, 468: { y: 0.45 } }), neutral);
 assert.ok(gaze.left.horizontal < -0.2, "left iris displacement must produce a directional gaze control");
