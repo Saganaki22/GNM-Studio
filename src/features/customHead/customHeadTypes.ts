@@ -31,6 +31,5 @@ export type CustomHeadFitResult = {
   consistency: number | null;
   warnings: string[];
   frontYaw: number;
-  profileYaw: number;
+  profileYaw: number | null;
 };
-

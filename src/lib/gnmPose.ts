@@ -37,14 +37,38 @@ function measuredEye(frame: TrackingFrame | null, indices: EyeLandmarks) {
   const upper = frame.landmarks[indices.upper];
   const lower = frame.landmarks[indices.lower];
   if (![iris, outer, inner, upper, lower].every(Boolean)) return null;
-  const centerX = (outer.x + inner.x) * 0.5;
-  const centerY = (upper.y + lower.y) * 0.5;
-  const width = Math.hypot(inner.x - outer.x, inner.y - outer.y);
-  const height = Math.hypot(lower.x - upper.x, lower.y - upper.y);
+  let horizontalX = inner.x - outer.x;
+  let horizontalY = inner.y - outer.y;
+  const width = Math.hypot(horizontalX, horizontalY);
+  if (horizontalX < 0) {
+    horizontalX *= -1;
+    horizontalY *= -1;
+  }
+  horizontalX /= Math.max(width, 1e-5);
+  horizontalY /= Math.max(width, 1e-5);
+
+  // Measure in the eye's local axes. Reading raw image X/Y made a stationary
+  // iris appear to move when the user rolled their head.
+  let verticalX = lower.x - upper.x;
+  let verticalY = lower.y - upper.y;
+  const parallel = verticalX * horizontalX + verticalY * horizontalY;
+  verticalX -= parallel * horizontalX;
+  verticalY -= parallel * horizontalY;
+  const height = Math.hypot(verticalX, verticalY);
   if (width < 1e-5 || height < 1e-5) return null;
+  if (verticalY < 0) {
+    verticalX *= -1;
+    verticalY *= -1;
+  }
+  verticalX /= height;
+  verticalY /= height;
+  const centerX = (outer.x + inner.x + upper.x + lower.x) * 0.25;
+  const centerY = (outer.y + inner.y + upper.y + lower.y) * 0.25;
+  const irisX = iris.x - centerX;
+  const irisY = iris.y - centerY;
   return {
-    horizontal: (iris.x - centerX) / (width * 0.5),
-    vertical: (iris.y - centerY) / (height * 0.5),
+    horizontal: (irisX * horizontalX + irisY * horizontalY) / (width * 0.5),
+    vertical: (irisX * verticalX + irisY * verticalY) / (height * 0.5),
     confidence: THREE.MathUtils.clamp(Math.min(width / 0.04, height / 0.012), 0, 1),
   };
 }
@@ -67,10 +91,18 @@ function eyeControl(frame: TrackingFrame, neutral: TrackingFrame | null, indices
 }
 
 export function resolveIrisGaze(frame: TrackingFrame, neutral: TrackingFrame | null): IrisGaze {
-  return {
-    left: eyeControl(frame, neutral, eyeLandmarks.left),
-    right: eyeControl(frame, neutral, eyeLandmarks.right),
-  };
+  const left = eyeControl(frame, neutral, eyeLandmarks.left);
+  const right = eyeControl(frame, neutral, eyeLandmarks.right);
+  // Foreshortened eyes can occasionally report equal-and-opposite horizontal
+  // motion during a head turn. Preserve normal conjugate gaze, but bound this
+  // impossible one-frame divergence so the avatar never appears cross-eyed.
+  if (left.horizontal * right.horizontal < -0.04 && Math.abs(left.horizontal - right.horizontal) > 0.42) {
+    const totalConfidence = Math.max(1e-5, left.confidence + right.confidence);
+    const shared = (left.horizontal * left.confidence + right.horizontal * right.confidence) / totalConfidence;
+    left.horizontal = shared + THREE.MathUtils.clamp(left.horizontal - shared, -0.12, 0.12);
+    right.horizontal = shared + THREE.MathUtils.clamp(right.horizontal - shared, -0.12, 0.12);
+  }
+  return { left, right };
 }
 
 /** Split an exact tracked head orientation over GNM's neck/head hierarchy. */

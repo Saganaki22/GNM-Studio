@@ -4,6 +4,7 @@ import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import ortWasmFactoryUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.mjs?url";
 import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url";
 import { assetUrl } from "../../lib/assets";
+import { fitCustomHeadImageSize } from "./customHeadImageSizing";
 import { analyzeCustomHeadView, customHeadFeatureNames } from "./customHeadMeasurements";
 import type { CustomHeadAnalysis, CustomHeadBackend, CustomHeadProgress } from "./customHeadTypes";
 
@@ -13,7 +14,7 @@ type FitMessage = {
   type: "fit";
   id: number;
   front: ImageBitmap;
-  profile: ImageBitmap;
+  profile: ImageBitmap | null;
   currentWeights: Float32Array | null;
   strength: number;
 };
@@ -23,10 +24,14 @@ type FitRuntime = {
   featureNames: string[];
   mediaPipeCanonical: number[];
   gnmRatioMean: number[];
+  gnmRatioStd: number[];
   priorWeights: number[];
   weightStd: number[];
   gain: number[][];
   targetScaleLimits: [number, number];
+  ratioStdLimit: number;
+  weightZLimit: number;
+  weightRmsLimit: number;
 };
 
 type FeatureTensor = { data: Float32Array; dims: number[] };
@@ -54,8 +59,8 @@ async function loadLandmarker() {
       outputFacialTransformationMatrixes: true,
       runningMode: "IMAGE",
       numFaces: 1,
-      minFaceDetectionConfidence: 0.6,
-      minFacePresenceConfidence: 0.6,
+      minFaceDetectionConfidence: 0.35,
+      minFacePresenceConfidence: 0.35,
     });
   })();
   return landmarkerPromise;
@@ -74,10 +79,14 @@ async function loadFitRuntime() {
         || runtime.featureNames.join("|") !== customHeadFeatureNames.join("|")
         || runtime.mediaPipeCanonical.length !== featureCount
         || runtime.gnmRatioMean.length !== featureCount
+        || runtime.gnmRatioStd.length !== featureCount
         || runtime.priorWeights.length !== 253
         || runtime.weightStd.length !== 253
         || runtime.gain.length !== 253
         || runtime.gain.some((row) => row.length !== featureCount)
+        || !Number.isFinite(runtime.ratioStdLimit)
+        || !Number.isFinite(runtime.weightZLimit)
+        || !Number.isFinite(runtime.weightRmsLimit)
       ) {
         throw new Error("The bundled custom-head fitting runtime is incompatible with this app build.");
       }
@@ -87,28 +96,51 @@ async function loadFitRuntime() {
 }
 
 function canvasFromBitmap(bitmap: ImageBitmap) {
-  const maximum = 1024;
-  const scale = Math.min(1, maximum / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const { width, height } = fitCustomHeadImageSize(bitmap.width, bitmap.height);
   const canvas = new OffscreenCanvas(width, height);
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) throw new Error("This browser could not create an image-analysis canvas.");
-  context.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close();
+  try {
+    context.drawImage(bitmap, 0, 0, width, height);
+  } finally {
+    bitmap.close();
+  }
   return canvas;
+}
+
+function closeBitmap(bitmap: ImageBitmap) {
+  try {
+    bitmap.close();
+  } catch {
+    // A transferred bitmap may already have been consumed by canvasFromBitmap.
+  }
 }
 
 async function analyzeImage(id: number, canvas: OffscreenCanvas, view: "front" | "profile") {
   postProgress(id, { stage: "landmarks", message: `Reading ${view} facial geometry…`, percent: null });
   const landmarker = await loadLandmarker();
-  const result = landmarker.detect(canvas);
-  const face = result.faceLandmarks[0];
+  let result = landmarker.detect(canvas);
+  let face = result.faceLandmarks[0];
+  let mirrored = false;
+  if (!face) {
+    postProgress(id, { stage: "landmarks", message: `Retrying the ${view} face from the opposite orientation…`, percent: null });
+    const retryCanvas = new OffscreenCanvas(canvas.width, canvas.height);
+    const retryContext = retryCanvas.getContext("2d", { willReadFrequently: true });
+    if (retryContext) {
+      retryContext.translate(canvas.width, 0);
+      retryContext.scale(-1, 1);
+      retryContext.drawImage(canvas, 0, 0);
+      result = landmarker.detect(retryCanvas);
+      face = result.faceLandmarks[0];
+      mirrored = Boolean(face);
+    }
+  }
   if (!face) throw new Error(`No face was detected in the ${view} image.`);
   return analyzeCustomHeadView(
     view,
-    face.map(({ x, y, z }) => ({ x, y, z })),
+    face.map(({ x, y, z }) => ({ x: mirrored ? 1 - x : x, y, z })),
     (result.faceBlendshapes[0]?.categories ?? []).map(({ categoryName, score }) => ({ name: categoryName, score })),
+    canvas.width / Math.max(1, canvas.height),
   );
 }
 
@@ -191,27 +223,65 @@ function cosine(first: Float32Array, second: Float32Array) {
 function fitWeights(
   runtime: FitRuntime,
   front: CustomHeadAnalysis,
-  profile: CustomHeadAnalysis,
+  profile: CustomHeadAnalysis | null,
   currentWeights: Float32Array | null,
   strength: number,
 ) {
-  const measured = [...front.measurements, ...profile.measurements];
-  if (measured.length !== customHeadFeatureNames.length || measured.some((value) => !Number.isFinite(value))) {
-    throw new Error("The two images did not produce a complete set of head measurements.");
+  const reliability = (score: number, neutralTarget: number) => (
+    Math.min(1, Math.max(0, score / Math.max(neutralTarget, 1e-5)))
+  );
+  // The straight-on image now supplies both aspect-corrected 2D proportions
+  // and MediaPipe Z projection. An optional three-quarter image stabilizes the
+  // five depth channels without being mandatory for a useful fit.
+  const measured = [...front.measurements];
+  if (profile) {
+    const profileReliability = reliability(profile.neutralScore, 0.48);
+    const profileBlend = 0.22 + profileReliability * 0.18;
+    for (let feature = 0; feature < profile.measurements.length; feature += 1) {
+      const index = 11 + feature;
+      measured[index] += (profile.measurements[feature] - measured[index]) * profileBlend;
+    }
   }
+  if (measured.length !== customHeadFeatureNames.length || measured.some((value) => !Number.isFinite(value))) {
+    throw new Error("The front image did not produce a complete set of head measurements.");
+  }
+  // Expressions should not become permanent identity. When a source photo is
+  // non-neutral, progressively damp its mouth-sensitive ratios back toward the
+  // canonical neutral head while retaining the stable cranial measurements.
+  const frontReliability = reliability(front.neutralScore, 0.54);
+  const dampToCanonical = (index: number, amount: number) => {
+    const canonical = runtime.mediaPipeCanonical[index];
+    measured[index] = canonical + (measured[index] - canonical) * amount;
+  };
+  dampToCanonical(7, frontReliability);
+  dampToCanonical(8, 0.45 + frontReliability * 0.55);
+  const depthReliability = profile ? reliability(profile.neutralScore, 0.48) : frontReliability;
+  dampToCanonical(14, depthReliability);
+  dampToCanonical(15, depthReliability);
   const [minimumScale, maximumScale] = runtime.targetScaleLimits;
   const targetRatios = measured.map((value, index) => {
     const relative = value / Math.max(runtime.mediaPipeCanonical[index], 1e-6);
-    return runtime.gnmRatioMean[index] * Math.min(maximumScale, Math.max(minimumScale, relative));
+    const scaled = runtime.gnmRatioMean[index] * Math.min(maximumScale, Math.max(minimumScale, relative));
+    const spread = runtime.gnmRatioStd[index] * runtime.ratioStdLimit;
+    return Math.min(runtime.gnmRatioMean[index] + spread, Math.max(runtime.gnmRatioMean[index] - spread, scaled));
   });
   const fitted = new Float32Array(253);
+  const normalized = new Float32Array(253);
   for (let component = 0; component < fitted.length; component += 1) {
     let value = runtime.priorWeights[component];
     for (let feature = 0; feature < targetRatios.length; feature += 1) {
       value += runtime.gain[component][feature] * (targetRatios[feature] - runtime.gnmRatioMean[feature]);
     }
-    const spread = runtime.weightStd[component] * 3.4;
-    fitted[component] = Math.min(runtime.priorWeights[component] + spread, Math.max(runtime.priorWeights[component] - spread, value));
+    const z = (value - runtime.priorWeights[component]) / runtime.weightStd[component];
+    normalized[component] = Math.min(runtime.weightZLimit, Math.max(-runtime.weightZLimit, z));
+  }
+  let normalizedEnergy = 0;
+  for (const value of normalized) normalizedEnergy += value * value;
+  const rms = Math.sqrt(normalizedEnergy / normalized.length);
+  const rmsScale = rms > runtime.weightRmsLimit ? runtime.weightRmsLimit / rms : 1;
+  for (let component = 0; component < fitted.length; component += 1) {
+    fitted[component] = runtime.priorWeights[component]
+      + normalized[component] * rmsScale * runtime.weightStd[component];
   }
   const source = currentWeights?.length === 253 ? currentWeights : new Float32Array(runtime.priorWeights);
   const blend = Math.min(1, Math.max(0, strength));
@@ -223,29 +293,39 @@ function fitWeights(
 
 async function fit(message: FitMessage) {
   const frontCanvas = canvasFromBitmap(message.front);
-  const profileCanvas = canvasFromBitmap(message.profile);
+  const profileCanvas = message.profile ? canvasFromBitmap(message.profile) : null;
   const [front, profile, fitRuntime] = await Promise.all([
     analyzeImage(message.id, frontCanvas, "front"),
-    analyzeImage(message.id, profileCanvas, "profile"),
+    profileCanvas ? analyzeImage(message.id, profileCanvas, "profile") : Promise.resolve(null),
     loadFitRuntime(),
   ]);
 
   const warnings: string[] = [];
+  if (front.neutralScore < 0.54) {
+    warnings.push("The front photo is expressive. Mouth-sensitive identity measurements were automatically neutralized.");
+  }
+  if (profile && profile.neutralScore < 0.48) {
+    warnings.push("The side photo is expressive. Profile lip measurements were automatically neutralized.");
+  }
   let backend: CustomHeadBackend = "unavailable";
   let consistency: number | null = null;
-  try {
-    const dino = await loadDino(message.id);
-    backend = dino.backend;
-    const [frontDescriptor, profileDescriptor] = await Promise.all([
-      extractDinoDescriptor(message.id, dino, frontCanvas, "front"),
-      extractDinoDescriptor(message.id, dino, profileCanvas, "profile"),
-    ]);
-    consistency = cosine(frontDescriptor, profileDescriptor);
-    if (consistency < 0.35) {
-      warnings.push("DINOv3 found weak agreement between the two views. Confirm that both photos show the same person.");
+  if (!profile || !profileCanvas) {
+    warnings.push("This was a front-only geometry fit. Add an optional 45–60° image to validate the person and stabilize facial depth.");
+  } else {
+    try {
+      const dino = await loadDino(message.id);
+      backend = dino.backend;
+      const [frontDescriptor, profileDescriptor] = await Promise.all([
+        extractDinoDescriptor(message.id, dino, frontCanvas, "front"),
+        extractDinoDescriptor(message.id, dino, profileCanvas, "profile"),
+      ]);
+      consistency = cosine(frontDescriptor, profileDescriptor);
+      if (consistency < 0.35) {
+        warnings.push("DINOv3 found weak agreement between the two views. Confirm that both photos show the same person.");
+      }
+    } catch (error) {
+      warnings.push(`DINOv3 was unavailable, so the fit used MediaPipe geometry only: ${error instanceof Error ? error.message : String(error)}`);
     }
-  } catch (error) {
-    warnings.push(`DINOv3 was unavailable, so the fit used MediaPipe geometry only: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   postProgress(message.id, { stage: "fitting", message: "Solving constrained GNM identity coefficients…", percent: null });
@@ -259,7 +339,7 @@ async function fit(message: FitMessage) {
       consistency,
       warnings,
       frontYaw: front.yawProxy,
-      profileYaw: profile.yawProxy,
+      profileYaw: profile?.yawProxy ?? null,
     },
   }, [weights.buffer]);
 }
@@ -268,8 +348,8 @@ self.onmessage = (event: MessageEvent<FitMessage>) => {
   if (event.data.type !== "fit") return;
   const message = event.data;
   queue = queue.then(() => fit(message)).catch((error) => {
-    message.front.close();
-    message.profile.close();
+    closeBitmap(message.front);
+    if (message.profile) closeBitmap(message.profile);
     self.postMessage({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
   });
 };

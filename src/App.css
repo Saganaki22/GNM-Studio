@@ -81,6 +81,13 @@
 .sidebar { position: relative; background: var(--surface); min-height: 0; overflow-y: auto; overflow-x: hidden; transition: width .28s cubic-bezier(.2,.75,.2,1), background .2s ease; }
 .left-sidebar { grid-area: left; border-right: 1px solid var(--line); }
 .right-sidebar { grid-area: right; border-left: 1px solid var(--line); }
+.app-shell.sidebar-resizing { transition: none; }
+.app-shell.sidebar-resizing .sidebar { transition: background .2s ease; }
+.sidebar-resize-handle { position: absolute; z-index: 14; top: 0; bottom: 0; width: 9px; touch-action: none; cursor: col-resize; outline: 0; }
+.left-sidebar .sidebar-resize-handle { right: 0; }
+.right-sidebar .sidebar-resize-handle { left: 0; }
+.sidebar-resize-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: transparent; transition: background .15s ease, box-shadow .15s ease; }
+.sidebar-resize-handle:hover::after, .sidebar-resize-handle:focus-visible::after, .sidebar-resize-handle.active::after { background: var(--accent); box-shadow: 0 0 9px rgb(var(--accent-rgb) / .72); }
 .sidebar-collapse-toggle { position: sticky; top: 7px; z-index: 12; float: right; width: 28px; height: 28px; margin: 7px 7px -35px 0; padding: 0; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: rgba(15,21,29,.94); color: var(--muted-2); cursor: pointer; box-shadow: 0 5px 16px rgba(0,0,0,.18); transition: color .18s ease, border-color .18s ease, background .18s ease, transform .28s ease; }
 .sidebar-collapse-toggle:hover { color: var(--accent); border-color: rgb(var(--accent-rgb) / .36); background: var(--surface-3); }
 .left-sidebar .sidebar-collapse-toggle svg { transform: rotate(90deg); }

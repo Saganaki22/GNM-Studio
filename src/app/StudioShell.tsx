@@ -10,8 +10,10 @@ import { CustomHeadPanel } from "../features/customHead/CustomHeadPanel";
 import { PresetPanel } from "../features/presets/PresetPanel";
 import { TransportDock } from "../features/recording/TransportDock";
 import { LeftSidebar } from "../features/shell/LeftSidebar";
+import { SidebarResizeHandle } from "../features/shell/SidebarResizeHandle";
 import { StudioFileInputs } from "../features/shell/StudioFileInputs";
 import { StudioTopBar } from "../features/shell/StudioTopBar";
+import { useSidebarResize } from "../features/shell/useSidebarResize";
 import { SettingsPopover } from "../features/settings/SettingsPopover";
 import { RightSidebar } from "../features/stage/RightSidebar";
 import { StudioViewport } from "../features/stage/StudioViewport";
@@ -64,6 +66,7 @@ interface StudioShellProps {
 }
 
 export function StudioShell(props: StudioShellProps) {
+  const sidebarResize = useSidebarResize();
   const {
     settings, settingsOpen, setSettingsOpen, theme, setTheme, accent, setAccent,
     uiScale, setUiScale, leftSidebarCollapsed, setLeftSidebarCollapsed,
@@ -135,8 +138,15 @@ export function StudioShell(props: StudioShellProps) {
   return (
     <>
     <main
-      className={`app-shell ${isWebEdition ? "web-edition" : "desktop-edition"} ${leftSidebarCollapsed ? "left-sidebar-collapsed" : ""} ${rightSidebarCollapsed ? "right-sidebar-collapsed" : ""} ${recordingState === "recording" ? "is-recording" : ""} ${fullscreen ? "viewport-focus" : ""} ${outputControlsHidden ? "output-controls-hidden" : ""}`}
-      style={{ "--ui-scale": (uiScale / 100).toFixed(2) } as React.CSSProperties}
+      ref={sidebarResize.shellRef}
+      className={`app-shell ${isWebEdition ? "web-edition" : "desktop-edition"} ${leftSidebarCollapsed ? "left-sidebar-collapsed" : ""} ${rightSidebarCollapsed ? "right-sidebar-collapsed" : ""} ${sidebarResize.dragging ? "sidebar-resizing" : ""} ${recordingState === "recording" ? "is-recording" : ""} ${fullscreen ? "viewport-focus" : ""} ${outputControlsHidden ? "output-controls-hidden" : ""}`}
+      style={{
+        "--ui-scale": (uiScale / 100).toFixed(2),
+        ...(sidebarResize.desktopLayout ? {
+          "--left-sidebar-width": `${leftSidebarCollapsed ? 44 : sidebarResize.widths.left}px`,
+          "--right-sidebar-width": `${rightSidebarCollapsed ? 44 : sidebarResize.widths.right}px`,
+        } : {}),
+      } as React.CSSProperties}
       onPointerMove={fullscreen ? scheduleOutputControls : undefined}
     >
       <StudioTopBar
@@ -155,6 +165,7 @@ export function StudioShell(props: StudioShellProps) {
         toggleCollapsed={() => setLeftSidebarCollapsed((value) => !value)}
         showAvatar={showAvatar}
         showCapture={showCapture}
+        resizeHandle={!leftSidebarCollapsed && sidebarResize.desktopLayout ? <SidebarResizeHandle side="left" width={sidebarResize.widths.left} active={sidebarResize.dragging === "left"} {...sidebarResize.handle} /> : undefined}
         avatarContent={<>
           <AvatarModelPanel avatarKind={settings.avatarKind} gnmInfo={gnmInfo} select={(avatarKind) => { props.updateSetting("avatarKind", avatarKind); pushToast({ type: "info", title: `${avatarProfiles[avatarKind].label} selected`, message: avatarKind === "facecap" ? "MediaPipe now drives all 52 FaceCap morph targets directly." : "GNM semantic deformation and seeded desktop identities are active." }); }} />
           {activeProfile.supportsIdentity && <IdentityPanel seed={identitySeed} presentation={identityGender} population={identityEthnicity} presentationStrength={identityPresentationStrength} populationWeights={identityPopulationWeights} status={identityStatus} recordingIdle={recordingState === "idle"} web={isWebEdition} webBackend={webIdentityBackend} setSeed={identity.setSeed} setPresentation={identity.choosePresentation} setPopulation={identity.choosePopulation} setPresentationStrength={identity.setPresentationStrength} setPopulationWeight={identity.updatePopulationWeight} randomize={identity.randomize} comparePresentation={identity.comparePresentation} generate={() => void identity.generate()} />}
@@ -252,6 +263,7 @@ export function StudioShell(props: StudioShellProps) {
       <RightSidebar
         collapsed={rightSidebarCollapsed}
         toggleCollapsed={() => setRightSidebarCollapsed((value) => !value)}
+        resizeHandle={!rightSidebarCollapsed && sidebarResize.desktopLayout ? <SidebarResizeHandle side="right" width={sidebarResize.widths.right} active={sidebarResize.dragging === "right"} {...sidebarResize.handle} /> : undefined}
         tracking={{ status: trackerStatus, score: faceConfidence, label: trackingQualityLabel, fallbackReason: trackerFallbackReason, delegate: trackerDelegate, cameraReady: cameraAccess === "ready", reload: () => tracker.reload() }}
         settings={settings}
         updateSetting={props.updateSetting}

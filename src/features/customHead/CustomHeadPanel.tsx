@@ -41,11 +41,11 @@ function ViewCard(props: ViewCardProps) {
     <div className="custom-head-preview">
       {props.image
         ? <img src={props.image.url} alt={`${front ? "Front" : "Side"} head reference`} />
-        : <><ScanFace size={25} /><span>{front ? "Front" : "Side"}</span></>}
-      <strong>{front ? "Straight-on" : "Profile"}</strong>
+        : <><ScanFace size={25} /><span>{front ? "Front" : "3/4"}</span></>}
+      <strong>{front ? "Straight-on" : "Optional 3/4"}</strong>
     </div>
     <div className="custom-head-view-copy">
-      <span>{props.image?.name ?? (front ? "Neutral face, camera level" : "Turn 60–90° left or right")}</span>
+      <span>{props.image?.name ?? (front ? "Neutral face, camera level" : "Turn 45–60° left or right")}</span>
       {props.image && <small>{props.image.width} × {props.image.height} · {props.image.source}</small>}
     </div>
     <div className="custom-head-view-actions">
@@ -61,16 +61,16 @@ export function CustomHeadPanel(props: CustomHeadPanelProps) {
   const profileInputRef = useRef<HTMLInputElement>(null);
   const customHead = useCustomHead(props);
   const busy = customHead.status === "fitting" || customHead.status === "applying";
-  const ready = Boolean(customHead.images.front && customHead.images.profile);
+  const ready = Boolean(customHead.images.front);
   return <details className="panel-section experimental-custom-head">
     <summary>
-      <span><strong>Custom head</strong><small>Experimental · two views</small></span>
+      <span><strong>Custom head</strong><small>Experimental · front + optional 3/4</small></span>
       <span className={customHead.lastResult ? "custom-head-summary-state ready" : "custom-head-summary-state"}>
-        {customHead.lastResult ? "Fitted" : "Front + side"}<ChevronDown size={13} />
+        {customHead.lastResult ? "Fitted" : "Front required"}<ChevronDown size={13} />
       </span>
     </summary>
     <div className="custom-head-content">
-      <p className="helper-copy">Use neutral photos of the same person. MediaPipe measures the face geometry; DINOv3 Q4 validates both views in an isolated WebGPU worker with WASM fallback.</p>
+      <p className="helper-copy">A straight-on photo is enough. Add an optional 45–60° three-quarter photo of the same person for stronger depth and identity validation. MediaPipe measures the face geometry; DINOv3 Q4 validates two-view agreement in an isolated WebGPU worker with WASM fallback.</p>
       <div className="custom-head-views">
         <ViewCard view="front" image={customHead.images.front} cameraReady={customHead.cameraReady} busy={busy} inputRef={frontInputRef} choose={(file) => customHead.chooseFile("front", file)} capture={() => void customHead.capture("front")} remove={() => customHead.remove("front")} />
         <ViewCard view="profile" image={customHead.images.profile} cameraReady={customHead.cameraReady} busy={busy} inputRef={profileInputRef} choose={(file) => customHead.chooseFile("profile", file)} capture={() => void customHead.capture("profile")} remove={() => customHead.remove("profile")} />
@@ -83,10 +83,9 @@ export function CustomHeadPanel(props: CustomHeadPanelProps) {
       </div>}
       {customHead.lastResult && <div className="custom-head-result"><Sparkles size={12} /><span>{customHead.lastResult.backend === "unavailable" ? "Geometry-only fallback" : `DINOv3 ${customHead.lastResult.backend.toUpperCase()}`}{customHead.lastResult.consistency === null ? "" : ` · ${(customHead.lastResult.consistency * 100).toFixed(0)}% view match`}</span></div>}
       <button type="button" className="primary-button wide" disabled={!ready || busy || !customHead.recordingIdle} onClick={() => void customHead.fit()}>
-        <ScanFace size={14} />{busy ? customHead.status === "applying" ? "Applying custom head…" : "Analyzing two views…" : "Fit custom GNM head"}
+        <ScanFace size={14} />{busy ? customHead.status === "applying" ? "Applying custom head…" : customHead.images.profile ? "Analyzing both views…" : "Analyzing front view…" : "Fit custom GNM head"}
       </button>
-      <p className="helper-copy custom-head-model-note">First use downloads and caches the optional DINOv3 ViT-S/16 Q4 ONNX model. Photos and fitted coefficients stay on this device. DINOv3 model weights use Meta’s DINOv3 license.</p>
+      <p className="helper-copy custom-head-model-note">With two views, first use downloads and caches the optional DINOv3 ViT-S/16 Q4 ONNX model. Front-only fitting does not download DINOv3. Photos and fitted coefficients stay on this device. DINOv3 model weights use Meta’s DINOv3 license.</p>
     </div>
   </details>;
 }
-

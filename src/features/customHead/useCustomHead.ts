@@ -59,6 +59,16 @@ export function useCustomHead(options: CustomHeadOptions) {
       setLastResult(null);
       setStatus("idle");
       setProgress(null);
+      if (source === "upload") {
+        optionsRef.current.onToast({
+          type: "info",
+          title: `${view === "front" ? "Front" : "Three-quarter"} image ready`,
+          message: view === "front"
+            ? `${name} was loaded locally. You can fit now; a 45–60° image is optional and improves depth validation.`
+            : `${name} was loaded locally. Add a straight-on front image if it is still missing, then press Fit custom GNM head.`,
+          duration: 4_000,
+        });
+      }
     } catch (error) {
       optionsRef.current.onError(`Custom head ${view} image: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -81,7 +91,7 @@ export function useCustomHead(options: CustomHeadOptions) {
       optionsRef.current.onToast({
         type: "info",
         title: `${view === "front" ? "Front" : "Side"} view captured`,
-        message: view === "front" ? "Check that the face is straight and neutral." : "Check that the nose and chin profile are clearly visible.",
+        message: view === "front" ? "Check that the face is straight and neutral." : "Check for a 45–60° turn with both eyes and the nose profile visible.",
       });
     } catch (error) {
       optionsRef.current.onError(`Custom head camera capture: ${error instanceof Error ? error.message : String(error)}`);
@@ -100,8 +110,8 @@ export function useCustomHead(options: CustomHeadOptions) {
 
   const fit = useCallback(async () => {
     const current = imagesRef.current;
-    if (!current.front || !current.profile) {
-      optionsRef.current.onError("Custom head: add both a straight-on front image and a clear side image first.");
+    if (!current.front) {
+      optionsRef.current.onError("Custom head: add a straight-on front image first. The three-quarter image is optional.");
       return;
     }
     if (!optionsRef.current.recordingIdle) {
@@ -110,20 +120,25 @@ export function useCustomHead(options: CustomHeadOptions) {
     }
     setStatus("fitting");
     setLastResult(null);
-    setProgress({ stage: "landmarks", message: "Preparing the two images…", percent: null });
+    setProgress({ stage: "landmarks", message: current.profile ? "Preparing both reference images…" : "Preparing the front image…", percent: null });
+    let frontBitmap: ImageBitmap | null = null;
+    let profileBitmap: ImageBitmap | null = null;
     try {
-      const [frontBitmap, profileBitmap] = await Promise.all([
-        createImageBitmap(current.front.blob),
-        createImageBitmap(current.profile.blob),
-      ]);
+      frontBitmap = await createImageBitmap(current.front.blob);
+      profileBitmap = current.profile ? await createImageBitmap(current.profile.blob) : null;
       workerRef.current ??= new CustomHeadWorkerClient();
-      const result = await workerRef.current.fit(
+      const pendingFit = workerRef.current.fit(
         frontBitmap,
         profileBitmap,
         optionsRef.current.currentWeights,
         strength,
         setProgress,
       );
+      // postMessage transferred ownership to the worker. It now closes both
+      // bitmaps after drawing them into its bounded analysis canvases.
+      frontBitmap = null;
+      profileBitmap = null;
+      const result = await pendingFit;
       setStatus("applying");
       setProgress({ stage: "fitting", message: "Applying the fitted GNM identity…", percent: null });
       await optionsRef.current.applyWeights(result.weights);
@@ -134,7 +149,7 @@ export function useCustomHead(options: CustomHeadOptions) {
       optionsRef.current.onToast({
         type: "success",
         title: "Custom head applied",
-        message: `The two-view proportions were fitted to all 253 GNM identity components with ${backend}.`,
+        message: `${current.profile ? "The two-view" : "The front-view"} proportions were fitted to a bounded GNM identity with ${backend}.`,
         detail: result.consistency === null ? undefined : `DINOv3 cross-view cosine similarity: ${(result.consistency * 100).toFixed(1)}%.`,
         duration: 7_000,
       });
@@ -148,9 +163,15 @@ export function useCustomHead(options: CustomHeadOptions) {
         });
       }
     } catch (error) {
+      workerRef.current?.dispose();
+      workerRef.current = null;
       setStatus("error");
       setProgress(null);
       optionsRef.current.onError(`Custom head fitting: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      // Covers a failed second createImageBitmap before worker ownership begins.
+      try { frontBitmap?.close(); } catch { /* already detached */ }
+      try { profileBitmap?.close(); } catch { /* already detached */ }
     }
   }, [strength]);
 
@@ -169,4 +190,3 @@ export function useCustomHead(options: CustomHeadOptions) {
     fit,
   };
 }
-

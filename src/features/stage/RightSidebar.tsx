@@ -1,4 +1,4 @@
-import type { CSSProperties, RefObject } from "react";
+import type { CSSProperties, ReactNode, RefObject } from "react";
 import { Box, ChevronDown, Eye, Gauge, ImagePlus, Layers3, RefreshCw, RotateCcw, Sparkles, Video, X } from "lucide-react";
 import { FpsInput } from "../../components/FpsInput";
 import type { AppSettings, FaceAlignment, TrackingFrame } from "../../types";
@@ -22,10 +22,12 @@ export interface RightSidebarProps {
     url: string | null; name: string; inputRef: RefObject<HTMLInputElement | null>;
     clear: () => void;
   };
+  resizeHandle?: ReactNode;
 }
 
-export function RightSidebar({ collapsed, toggleCollapsed, tracking, settings, updateSetting, avatarLabel, calibrating, calibration, background }: RightSidebarProps) {
+export function RightSidebar({ collapsed, toggleCollapsed, tracking, settings, updateSetting, avatarLabel, calibrating, calibration, background, resizeHandle }: RightSidebarProps) {
   return <aside className={`sidebar right-sidebar ${collapsed ? "collapsed" : ""}`}>
+    {resizeHandle}
     <button type="button" className="sidebar-collapse-toggle" aria-label={collapsed ? "Expand right sidebar" : "Collapse right sidebar"} title={collapsed ? "Expand right sidebar" : "Collapse right sidebar"} onClick={toggleCollapsed}><ChevronDown size={15} /></button>
     <section className={`panel-section tracking-score tracker-${tracking.status}`}><div className="score-ring" style={{ "--score": `${tracking.score * 3.6}deg` } as CSSProperties}><strong>{tracking.score}</strong><small>%</small></div><div><span>Tracking quality</span><strong>{tracking.label}</strong><small title={tracking.fallbackReason || undefined}>{settings.trackingFps} FPS target · {tracking.delegate}</small><button className="inline-retry tracker-reload" disabled={!tracking.cameraReady} title={tracking.cameraReady ? "Reload the local MediaPipe model and face-tracking worker" : "Connect a camera before reloading the tracker"} onClick={tracking.reload}><RefreshCw size={12} />{tracking.status === "error" ? "Retry tracker" : tracking.status === "loading" ? "Restart loading" : "Reload tracker"}</button></div></section>
     <section className="panel-section"><div className="section-heading"><span>Layers</span><Layers3 size={15} /></div><label className={`toggle-row ${settings.showWebcam ? "is-active" : ""}`}><span><Video size={16} />Webcam<small>{settings.showWebcam ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showWebcam} onChange={(event) => updateSetting("showWebcam", event.target.checked)} /></label><label className={`toggle-row ${settings.showAvatar ? "is-active" : ""}`}><span><Box size={16} />{avatarLabel} avatar<small>{settings.showAvatar ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showAvatar} onChange={(event) => updateSetting("showAvatar", event.target.checked)} /></label><label className={`toggle-row ${settings.showLandmarks ? "is-active" : ""}`}><span><Gauge size={16} />Landmarks<small>{settings.showLandmarks ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.showLandmarks} onChange={(event) => updateSetting("showLandmarks", event.target.checked)} /></label><label className={`toggle-row ${settings.mirror ? "is-active" : ""}`}><span><Eye size={16} />Mirror camera + motion<small>{settings.mirror ? "ON" : "OFF"}</small></span><input type="checkbox" disabled={calibrating} checked={settings.mirror} onChange={(event) => updateSetting("mirror", event.target.checked)} /></label></section>

@@ -223,7 +223,10 @@ def main() -> None:
         "weightStd": weight_std.round(8).tolist(),
         # Stored component-major: 253 rows, one coefficient per image feature.
         "gain": gain.astype(np.float32).round(8).tolist(),
-        "targetScaleLimits": [0.72, 1.32],
+        "targetScaleLimits": [0.82, 1.18],
+        "ratioStdLimit": 2.0,
+        "weightZLimit": 1.65,
+        "weightRmsLimit": 0.88,
         "recommendedStrength": 0.82,
         "source": {
             "gnm": "https://github.com/google/GNM",

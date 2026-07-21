@@ -146,6 +146,32 @@ assert.ok(neckRoll.z > 0.04 && neckRoll.z < 0.06, "neck roll must stay subtle wh
 const gaze = resolveIrisGaze(frame({ 473: { x: 0.58 }, 468: { y: 0.45 } }), neutral);
 assert.ok(gaze.left.horizontal < -0.2, "left iris displacement must produce a directional gaze control");
 assert.ok(gaze.right.vertical > 0.2, "right iris displacement must produce a directional vertical gaze control");
+
+const rolledEyes = frame();
+for (const [center, indices] of [
+  [[0.565, 0.44], [263, 362, 386, 374, 473]],
+  [[0.435, 0.44], [33, 133, 159, 145, 468]],
+]) {
+  const angle = 0.62;
+  for (const index of indices) {
+    const source = rolledEyes.landmarks[index];
+    const x = source.x - center[0];
+    const y = source.y - center[1];
+    rolledEyes.landmarks[index] = {
+      ...source,
+      x: center[0] + x * Math.cos(angle) - y * Math.sin(angle),
+      y: center[1] + x * Math.sin(angle) + y * Math.cos(angle),
+    };
+  }
+}
+const rollInvariantGaze = resolveIrisGaze(rolledEyes, neutral);
+assert.ok(Math.abs(rollInvariantGaze.left.horizontal) < 0.03, "head roll must not create false left-eye gaze");
+assert.ok(Math.abs(rollInvariantGaze.left.vertical) < 0.03, "head roll must not create false left-eye vertical gaze");
+assert.ok(Math.abs(rollInvariantGaze.right.horizontal) < 0.03, "head roll must not create false right-eye gaze");
+assert.ok(Math.abs(rollInvariantGaze.right.vertical) < 0.03, "head roll must not create false right-eye vertical gaze");
+
+const divergent = resolveIrisGaze(frame({ 473: { x: 0.59 }, 468: { x: 0.42 } }), neutral);
+assert.ok(Math.abs(divergent.left.horizontal - divergent.right.horizontal) <= 0.25, "pose noise must not make the eyes visibly diverge");
 const overlaySource = readFileSync(new URL("../src/lib/trackingOverlay.ts", import.meta.url), "utf8");
 for (const marker of ["473", "468", "drawTrackingVectors", "mouth width", "arrow(context"]) {
   assert.ok(overlaySource.includes(marker), `tracking vector overlay is missing ${marker}`);
