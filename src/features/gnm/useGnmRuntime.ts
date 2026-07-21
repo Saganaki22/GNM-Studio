@@ -117,6 +117,27 @@ export function useGnmRuntime({ avatarKind, isRecordingIdle, onToast, onError }:
     }
   }, [evaluateParameters, identityPopulationWeights, identityPresentationStrength, identitySeed]);
 
+  const applyIdentityWeights = useCallback(async (weights: Float32Array) => {
+    if (weights.length !== 253 || weights.some((value) => !Number.isFinite(value))) {
+      throw new Error("Custom identity fitting returned invalid GNM coefficients.");
+    }
+    const request = ++identityGenerationRef.current;
+    const identity = weights.slice();
+    setIdentityStatus("generating");
+    identityWeightsRef.current = identity;
+    identityEvaluationSkipRef.current = identity;
+    setIdentityWeights(identity);
+    try {
+      const evaluation = await evaluateParameters(identity, gnmExpressionWeightsRef.current);
+      if (request !== identityGenerationRef.current) throw new Error("The custom identity was replaced by a newer identity request.");
+      setIdentityVertices(evaluation.positions);
+      setIdentityStatus("ready");
+    } catch (error) {
+      if (request === identityGenerationRef.current) setIdentityStatus("error");
+      throw error;
+    }
+  }, [evaluateParameters]);
+
   useEffect(() => {
     if (!identityDecoderReady || avatarKind !== "gnm" || !recordingIdleGetterRef.current()) return;
     const timer = window.setTimeout(() => { void generateIdentity(identitySeed, identityPresentationStrength, identityPopulationWeights, false); }, 220);
@@ -247,7 +268,7 @@ export function useGnmRuntime({ avatarKind, isRecordingIdle, onToast, onError }:
       vertices: identityVertices, weights: identityWeights, status: identityStatus, webBackend: webIdentityBackend,
       decoderReady: identityDecoderReady, setSeed: setIdentitySeed, choosePresentation, choosePopulation,
       setPresentationStrength, updatePopulationWeight, comparePresentation, randomize: randomizeIdentity,
-      generate: generateIdentity,
+      generate: generateIdentity, applyWeights: applyIdentityWeights,
     },
     expression: {
       ready: expressionDecoderReady, status: gnmExpressionStatus, weights: gnmExpressionWeights,
