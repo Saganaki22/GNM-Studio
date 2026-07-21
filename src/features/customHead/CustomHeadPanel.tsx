@@ -62,6 +62,9 @@ export function CustomHeadPanel(props: CustomHeadPanelProps) {
   const customHead = useCustomHead(props);
   const busy = customHead.status === "fitting" || customHead.status === "applying";
   const ready = Boolean(customHead.images.front);
+  const fitImprovement = customHead.lastResult && customHead.lastResult.geometry.initialRmse > 1e-8
+    ? Math.max(0, 1 - customHead.lastResult.geometry.fittedRmse / customHead.lastResult.geometry.initialRmse)
+    : customHead.lastResult ? 1 : null;
   return <details className="panel-section experimental-custom-head">
     <summary>
       <span><strong>Custom head</strong><small>Experimental · front + optional 3/4</small></span>
@@ -70,7 +73,7 @@ export function CustomHeadPanel(props: CustomHeadPanelProps) {
       </span>
     </summary>
     <div className="custom-head-content">
-      <p className="helper-copy">A straight-on photo is enough. Add an optional 45–60° three-quarter photo of the same person for stronger depth and identity validation. MediaPipe measures the face geometry; DINOv3 Q4 validates two-view agreement in an isolated WebGPU worker with WASM fallback.</p>
+      <p className="helper-copy">A straight-on photo is enough. Add an optional 45–60° three-quarter photo of the same person for stronger depth and identity validation. MediaPipe aligns 118 anatomical points in face-local XYZ; a robust solver fits them inside a 48-mode subspace sampled from valid GNM identities. DINOv3 Q4 only validates two-view agreement.</p>
       <div className="custom-head-views">
         <ViewCard view="front" image={customHead.images.front} cameraReady={customHead.cameraReady} busy={busy} inputRef={frontInputRef} choose={(file) => customHead.chooseFile("front", file)} capture={() => void customHead.capture("front")} remove={() => customHead.remove("front")} />
         <ViewCard view="profile" image={customHead.images.profile} cameraReady={customHead.cameraReady} busy={busy} inputRef={profileInputRef} choose={(file) => customHead.chooseFile("profile", file)} capture={() => void customHead.capture("profile")} remove={() => customHead.remove("profile")} />
@@ -81,7 +84,7 @@ export function CustomHeadPanel(props: CustomHeadPanelProps) {
         <span>{customHead.progress.stage === "model" || customHead.progress.stage === "features" ? <Cpu size={12} /> : <Sparkles size={12} />}{customHead.progress.message}</span>
         {customHead.progress.percent !== null && <i><b style={{ width: `${customHead.progress.percent}%` }} /></i>}
       </div>}
-      {customHead.lastResult && <div className="custom-head-result"><Sparkles size={12} /><span>{customHead.lastResult.backend === "unavailable" ? "Geometry-only fallback" : `DINOv3 ${customHead.lastResult.backend.toUpperCase()}`}{customHead.lastResult.consistency === null ? "" : ` · ${(customHead.lastResult.consistency * 100).toFixed(0)}% view match`}</span></div>}
+      {customHead.lastResult && <div className="custom-head-result"><Sparkles size={12} /><span>GNM geometry fit{fitImprovement === null ? "" : ` · ${(fitImprovement * 100).toFixed(0)}% residual reduction`}{customHead.lastResult.consistency === null ? "" : ` · ${(customHead.lastResult.consistency * 100).toFixed(0)}% DINO view match`}</span></div>}
       <button type="button" className="primary-button wide" disabled={!ready || busy || !customHead.recordingIdle} onClick={() => void customHead.fit()}>
         <ScanFace size={14} />{busy ? customHead.status === "applying" ? "Applying custom head…" : customHead.images.profile ? "Analyzing both views…" : "Analyzing front view…" : "Fit custom GNM head"}
       </button>

@@ -5,8 +5,15 @@ import ortWasmFactoryUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.m
 import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url";
 import { assetUrl } from "../../lib/assets";
 import { fitCustomHeadImageSize } from "./customHeadImageSizing";
-import { analyzeCustomHeadView, customHeadFeatureNames } from "./customHeadMeasurements";
-import type { CustomHeadAnalysis, CustomHeadBackend, CustomHeadProgress } from "./customHeadTypes";
+import {
+  buildCustomHeadTarget,
+  canonicalizeCustomHeadLandmarks,
+  solveCustomHeadGeometry,
+  validateCustomHeadFitRuntime,
+  type CustomHeadFitRuntime,
+} from "./customHeadGeometryFit";
+import { analyzeCustomHeadView } from "./customHeadMeasurements";
+import type { CustomHeadBackend, CustomHeadProgress } from "./customHeadTypes";
 
 const DINO_MODEL = "onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX";
 
@@ -19,21 +26,6 @@ type FitMessage = {
   strength: number;
 };
 
-type FitRuntime = {
-  version: number;
-  featureNames: string[];
-  mediaPipeCanonical: number[];
-  gnmRatioMean: number[];
-  gnmRatioStd: number[];
-  priorWeights: number[];
-  weightStd: number[];
-  gain: number[][];
-  targetScaleLimits: [number, number];
-  ratioStdLimit: number;
-  weightZLimit: number;
-  weightRmsLimit: number;
-};
-
 type FeatureTensor = { data: Float32Array; dims: number[] };
 type DinoExtractor = {
   (image: OffscreenCanvas): Promise<FeatureTensor>;
@@ -42,7 +34,7 @@ type DinoExtractor = {
 type DinoRuntime = { extractor: DinoExtractor; backend: Exclude<CustomHeadBackend, "unavailable"> };
 
 let landmarkerPromise: Promise<FaceLandmarker> | null = null;
-let fitRuntimePromise: Promise<FitRuntime> | null = null;
+let fitRuntimePromise: Promise<CustomHeadFitRuntime> | null = null;
 let dinoPromise: Promise<DinoRuntime> | null = null;
 let queue = Promise.resolve();
 
@@ -70,28 +62,9 @@ async function loadFitRuntime() {
   fitRuntimePromise ??= fetch(assetUrl("models/gnm_custom_head_fit.json"))
     .then((response) => {
       if (!response.ok) throw new Error(`Could not load the custom-head fitting runtime (HTTP ${response.status}).`);
-      return response.json() as Promise<FitRuntime>;
+      return response.json() as Promise<unknown>;
     })
-    .then((runtime) => {
-      const featureCount = customHeadFeatureNames.length;
-      if (
-        runtime.version !== 1
-        || runtime.featureNames.join("|") !== customHeadFeatureNames.join("|")
-        || runtime.mediaPipeCanonical.length !== featureCount
-        || runtime.gnmRatioMean.length !== featureCount
-        || runtime.gnmRatioStd.length !== featureCount
-        || runtime.priorWeights.length !== 253
-        || runtime.weightStd.length !== 253
-        || runtime.gain.length !== 253
-        || runtime.gain.some((row) => row.length !== featureCount)
-        || !Number.isFinite(runtime.ratioStdLimit)
-        || !Number.isFinite(runtime.weightZLimit)
-        || !Number.isFinite(runtime.weightRmsLimit)
-      ) {
-        throw new Error("The bundled custom-head fitting runtime is incompatible with this app build.");
-      }
-      return runtime;
-    });
+    .then(validateCustomHeadFitRuntime);
   return fitRuntimePromise;
 }
 
@@ -160,6 +133,10 @@ function transformerProgress(id: number, update: unknown) {
 async function createDinoRuntime(id: number, device: "webgpu" | "wasm") {
   const { env, pipeline } = await import("@huggingface/transformers");
   env.allowRemoteModels = true;
+  // Transformers.js ships an inert `/models/` Node/browser default. Disable
+  // local lookup here so a Pages build never probes the domain root before it
+  // requests the configured Hugging Face model.
+  env.allowLocalModels = false;
   env.useBrowserCache = true;
   if (env.backends.onnx.wasm) {
     env.backends.onnx.wasm.wasmPaths = { mjs: ortWasmFactoryUrl, wasm: ortWasmUrl };
@@ -220,77 +197,6 @@ function cosine(first: Float32Array, second: Float32Array) {
   return Math.min(1, Math.max(-1, value));
 }
 
-function fitWeights(
-  runtime: FitRuntime,
-  front: CustomHeadAnalysis,
-  profile: CustomHeadAnalysis | null,
-  currentWeights: Float32Array | null,
-  strength: number,
-) {
-  const reliability = (score: number, neutralTarget: number) => (
-    Math.min(1, Math.max(0, score / Math.max(neutralTarget, 1e-5)))
-  );
-  // The straight-on image now supplies both aspect-corrected 2D proportions
-  // and MediaPipe Z projection. An optional three-quarter image stabilizes the
-  // five depth channels without being mandatory for a useful fit.
-  const measured = [...front.measurements];
-  if (profile) {
-    const profileReliability = reliability(profile.neutralScore, 0.48);
-    const profileBlend = 0.22 + profileReliability * 0.18;
-    for (let feature = 0; feature < profile.measurements.length; feature += 1) {
-      const index = 11 + feature;
-      measured[index] += (profile.measurements[feature] - measured[index]) * profileBlend;
-    }
-  }
-  if (measured.length !== customHeadFeatureNames.length || measured.some((value) => !Number.isFinite(value))) {
-    throw new Error("The front image did not produce a complete set of head measurements.");
-  }
-  // Expressions should not become permanent identity. When a source photo is
-  // non-neutral, progressively damp its mouth-sensitive ratios back toward the
-  // canonical neutral head while retaining the stable cranial measurements.
-  const frontReliability = reliability(front.neutralScore, 0.54);
-  const dampToCanonical = (index: number, amount: number) => {
-    const canonical = runtime.mediaPipeCanonical[index];
-    measured[index] = canonical + (measured[index] - canonical) * amount;
-  };
-  dampToCanonical(7, frontReliability);
-  dampToCanonical(8, 0.45 + frontReliability * 0.55);
-  const depthReliability = profile ? reliability(profile.neutralScore, 0.48) : frontReliability;
-  dampToCanonical(14, depthReliability);
-  dampToCanonical(15, depthReliability);
-  const [minimumScale, maximumScale] = runtime.targetScaleLimits;
-  const targetRatios = measured.map((value, index) => {
-    const relative = value / Math.max(runtime.mediaPipeCanonical[index], 1e-6);
-    const scaled = runtime.gnmRatioMean[index] * Math.min(maximumScale, Math.max(minimumScale, relative));
-    const spread = runtime.gnmRatioStd[index] * runtime.ratioStdLimit;
-    return Math.min(runtime.gnmRatioMean[index] + spread, Math.max(runtime.gnmRatioMean[index] - spread, scaled));
-  });
-  const fitted = new Float32Array(253);
-  const normalized = new Float32Array(253);
-  for (let component = 0; component < fitted.length; component += 1) {
-    let value = runtime.priorWeights[component];
-    for (let feature = 0; feature < targetRatios.length; feature += 1) {
-      value += runtime.gain[component][feature] * (targetRatios[feature] - runtime.gnmRatioMean[feature]);
-    }
-    const z = (value - runtime.priorWeights[component]) / runtime.weightStd[component];
-    normalized[component] = Math.min(runtime.weightZLimit, Math.max(-runtime.weightZLimit, z));
-  }
-  let normalizedEnergy = 0;
-  for (const value of normalized) normalizedEnergy += value * value;
-  const rms = Math.sqrt(normalizedEnergy / normalized.length);
-  const rmsScale = rms > runtime.weightRmsLimit ? runtime.weightRmsLimit / rms : 1;
-  for (let component = 0; component < fitted.length; component += 1) {
-    fitted[component] = runtime.priorWeights[component]
-      + normalized[component] * rmsScale * runtime.weightStd[component];
-  }
-  const source = currentWeights?.length === 253 ? currentWeights : new Float32Array(runtime.priorWeights);
-  const blend = Math.min(1, Math.max(0, strength));
-  for (let component = 0; component < fitted.length; component += 1) {
-    fitted[component] = source[component] + (fitted[component] - source[component]) * blend;
-  }
-  return fitted;
-}
-
 async function fit(message: FitMessage) {
   const frontCanvas = canvasFromBitmap(message.front);
   const profileCanvas = message.profile ? canvasFromBitmap(message.profile) : null;
@@ -328,8 +234,31 @@ async function fit(message: FitMessage) {
     }
   }
 
-  postProgress(message.id, { stage: "fitting", message: "Solving constrained GNM identity coefficients…", percent: null });
-  const weights = fitWeights(fitRuntime, front, profile, message.currentWeights, message.strength);
+  postProgress(message.id, { stage: "fitting", message: "Aligning dense facial geometry in local XYZ space…", percent: null });
+  const frontCoordinates = canonicalizeCustomHeadLandmarks(
+    front.landmarks,
+    front.imageAspect,
+    fitRuntime.landmarkIndices,
+  );
+  const profileCoordinates = profile
+    ? canonicalizeCustomHeadLandmarks(profile.landmarks, profile.imageAspect, fitRuntime.landmarkIndices)
+    : null;
+  const { target, coordinateWeights } = buildCustomHeadTarget(
+    fitRuntime,
+    { coordinates: frontCoordinates, neutralScore: front.neutralScore },
+    profileCoordinates && profile
+      ? { coordinates: profileCoordinates, neutralScore: profile.neutralScore }
+      : null,
+  );
+  postProgress(message.id, { stage: "fitting", message: "Solving the valid GNM identity subspace…", percent: null });
+  const geometryFit = solveCustomHeadGeometry(
+    fitRuntime,
+    target,
+    coordinateWeights,
+    message.currentWeights,
+    message.strength,
+  );
+  const { weights } = geometryFit;
   self.postMessage({
     type: "result",
     id: message.id,
@@ -340,6 +269,7 @@ async function fit(message: FitMessage) {
       warnings,
       frontYaw: front.yawProxy,
       profileYaw: profile?.yawProxy ?? null,
+      geometry: geometryFit.diagnostics,
     },
   }, [weights.buffer]);
 }

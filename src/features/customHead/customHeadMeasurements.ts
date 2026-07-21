@@ -123,6 +123,7 @@ export function analyzeCustomHeadView(
       landmarks,
       yawProxy: axes.yawProxy,
       neutralScore: neutral,
+      imageAspect,
       measurements: [
         axes.width / axes.height,
         ratio(172, 397),
@@ -147,6 +148,7 @@ export function analyzeCustomHeadView(
     landmarks,
     yawProxy: axes.yawProxy,
     neutralScore: neutral,
+    imageAspect,
     measurements: depthMeasurements(),
   };
 }

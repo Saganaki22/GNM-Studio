@@ -1,4 +1,5 @@
 import type { Landmark } from "../../types";
+import type { CustomHeadGeometryDiagnostics } from "./customHeadGeometryFit";
 
 export type CustomHeadView = "front" | "profile";
 export type CustomHeadBackend = "webgpu" | "wasm" | "unavailable";
@@ -23,6 +24,7 @@ export type CustomHeadAnalysis = {
   measurements: number[];
   yawProxy: number;
   neutralScore: number;
+  imageAspect: number;
 };
 
 export type CustomHeadFitResult = {
@@ -32,4 +34,5 @@ export type CustomHeadFitResult = {
   warnings: string[];
   frontYaw: number;
   profileYaw: number | null;
+  geometry: CustomHeadGeometryDiagnostics;
 };

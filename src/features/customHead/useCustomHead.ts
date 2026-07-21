@@ -22,7 +22,7 @@ const emptyImages = (): ImageSlots => ({ front: null, profile: null });
 
 export function useCustomHead(options: CustomHeadOptions) {
   const [images, setImages] = useState<ImageSlots>(emptyImages);
-  const [strength, setStrength] = useState(0.82);
+  const [strength, setStrength] = useState(0.90);
   const [status, setStatus] = useState<"idle" | "fitting" | "applying" | "error">("idle");
   const [progress, setProgress] = useState<CustomHeadProgress | null>(null);
   const [lastResult, setLastResult] = useState<CustomHeadFitResult | null>(null);
@@ -145,12 +145,17 @@ export function useCustomHead(options: CustomHeadOptions) {
       setLastResult(result);
       setStatus("idle");
       setProgress(null);
-      const backend = result.backend === "unavailable" ? "MediaPipe geometry fallback" : `DINOv3 ${result.backend.toUpperCase()}`;
+      const improvement = result.geometry.initialRmse > 1e-8
+        ? Math.max(0, 1 - result.geometry.fittedRmse / result.geometry.initialRmse)
+        : 1;
+      const dinoDetail = result.consistency === null
+        ? "DINOv3 cross-view validation was not used."
+        : `DINOv3 ${result.backend.toUpperCase()} cross-view similarity: ${(result.consistency * 100).toFixed(1)}%.`;
       optionsRef.current.onToast({
         type: "success",
         title: "Custom head applied",
-        message: `${current.profile ? "The two-view" : "The front-view"} proportions were fitted to a bounded GNM identity with ${backend}.`,
-        detail: result.consistency === null ? undefined : `DINOv3 cross-view cosine similarity: ${(result.consistency * 100).toFixed(1)}%.`,
+        message: `${current.profile ? "The two-view" : "The front-view"} geometry was fitted inside the valid GNM identity subspace.`,
+        detail: `Weighted geometry residual reduced by ${(improvement * 100).toFixed(1)}%. ${dinoDetail}`,
         duration: 7_000,
       });
       if (result.warnings.length) {

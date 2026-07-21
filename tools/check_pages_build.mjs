@@ -77,7 +77,15 @@ const visit = (directory) => {
 visit(rootPath);
 for (const path of textFiles) {
   const source = readFileSync(path, "utf8");
-  if (/(["'`])\/(?:models|wasm|textures|head-svgrepo|favicon)(?:\/|\.)/.test(source)) {
+  const rootAssetPattern = /(["'`])\/(?:models|wasm|textures|head-svgrepo|favicon)(?:\/|\.)/g;
+  const unsafeMatches = [...source.matchAll(rootAssetPattern)].filter((match) => {
+    // Transformers.js contains its own `/models/` default even when local
+    // loading is explicitly disabled by our worker. It is not a requested URL.
+    const inertTransformersDefault = match[0].slice(1) === "/models/"
+      && source.includes("allowLocalModels=!1");
+    return !inertTransformersDefault;
+  });
+  if (unsafeMatches.length) {
     throw new Error(`${relative(rootPath, path)} contains a desktop-root asset URL`);
   }
 }
