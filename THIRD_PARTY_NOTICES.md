@@ -5,6 +5,12 @@ GNM Studio's own source code is licensed under Apache-2.0. Bundled dependencies 
 - Google GNM and MediaPipe Tasks: Apache-2.0. The web edition's compressed,
   quantized identity basis is derived from the released Google GNM model data
   and remains subject to the same GNM Apache-2.0 terms and attribution.
+- The Windows build bundles the Q4 ONNX conversion of Meta DINOv3 ViT-S/16
+  from `onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX` solely for optional
+  cross-view identity validation. These model files are governed by the
+  DINOv3 License, not Apache-2.0. A verbatim copy is embedded beside the model
+  and included as `DINOV3-LICENSE.txt` in portable packages:
+  <https://huggingface.co/onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX>.
 - Tauri: Apache-2.0 and MIT.
 - React, Three.js, Phosphor Icons, and other JavaScript dependencies: their package-declared licenses, primarily MIT.
 - Basis Universal's KTX2 transcoder is bundled through Three.js for offline FaceCap texture decoding and is licensed under Apache-2.0: <https://github.com/BinomialLLC/basis_universal>.

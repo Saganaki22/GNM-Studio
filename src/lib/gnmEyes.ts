@@ -59,8 +59,11 @@ function drawEyeTexture(canvas: HTMLCanvasElement, enabled: boolean, color: EyeC
   const palette = eyeColorPalette(color);
   const x = canvas.width / 2;
   const y = canvas.height / 2;
-  const irisRadius = 41.69; // 25% larger than the previous GNM iris.
-  const pupilRadius = 17.5; // 25% larger, preserving the iris-to-pupil ratio.
+  // Increase the visible GNM iris by 20% while preserving the existing black
+  // pupil size. This gives the colour more presence without making the eyes
+  // look more dilated or changing tracked gaze.
+  const irisRadius = 50.03;
+  const pupilRadius = 17.5;
 
   // Low-contrast peripheral vessels keep the sclera from looking like plain
   // white plastic. The deterministic curves avoid texture flicker on redraw.

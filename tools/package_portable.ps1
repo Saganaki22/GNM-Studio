@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "1.3.1",
+  [string]$Version = "1.4.0",
   [switch]$SkipUpx
 )
 
@@ -69,6 +69,7 @@ function New-PortablePackage([string]$PackageName, [bool]$UseUpx) {
   Copy-Item -LiteralPath (Join-Path $Root "THIRD_PARTY_NOTICES.md") -Destination $PackageDirectory
   Copy-Item -LiteralPath (Join-Path $Root "LICENSE") -Destination (Join-Path $PackageDirectory "LICENSE.txt")
   Copy-Item -LiteralPath (Join-Path $Root "third_party\google-gnm\LICENSE") -Destination (Join-Path $PackageDirectory "GOOGLE-GNM-LICENSE.txt")
+  Copy-Item -LiteralPath (Join-Path $Root "desktop-assets\models\huggingface\onnx-community\dinov3-vits16-pretrain-lvd1689m-ONNX\LICENSE.md") -Destination (Join-Path $PackageDirectory "DINOV3-LICENSE.txt")
 
   if ($UseUpx) {
     if (-not (Get-Command upx -ErrorAction SilentlyContinue)) {

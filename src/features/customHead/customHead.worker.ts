@@ -132,11 +132,12 @@ function transformerProgress(id: number, update: unknown) {
 
 async function createDinoRuntime(id: number, device: "webgpu" | "wasm") {
   const { env, pipeline } = await import("@huggingface/transformers");
-  env.allowRemoteModels = true;
-  // Transformers.js ships an inert `/models/` Node/browser default. Disable
-  // local lookup here so a Pages build never probes the domain root before it
-  // requests the configured Hugging Face model.
-  env.allowLocalModels = false;
+  const bundledDesktopModel = !__GNM_WEB_BUILD__ && !import.meta.env.DEV;
+  env.allowRemoteModels = !bundledDesktopModel;
+  env.allowLocalModels = bundledDesktopModel;
+  if (bundledDesktopModel) {
+    env.localModelPath = assetUrl("models/huggingface/");
+  }
   env.useBrowserCache = true;
   if (env.backends.onnx.wasm) {
     env.backends.onnx.wasm.wasmPaths = { mjs: ortWasmFactoryUrl, wasm: ortWasmUrl };

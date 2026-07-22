@@ -169,7 +169,7 @@ for (const sample of [
 
 const eyeSource = readFileSync(fileURLToPath(new URL("../src/lib/gnmEyes.ts", import.meta.url)), "utf8");
 for (const marker of [
-  "irisRadius = 41.69", "pupilRadius = 17.5", "installGnmEyeMaterials",
+  "irisRadius = 50.03", "pupilRadius = 17.5", "installGnmEyeMaterials",
   "GNM Studio enamel", "GNM Studio tongue", "GNM Studio gums", "GNM Studio mouth interior",
   "anatomyMembership", "gnmNeutralEyeDivergence = 0.006", "gnmGazeDeadZone = 0.055",
 ]) {

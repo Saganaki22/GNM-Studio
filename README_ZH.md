@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.3.1-54ddb2" alt="版本 v1.3.1"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.4.0-54ddb2" alt="版本 v1.4.0"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages 网页版"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 与 React">
@@ -28,19 +28,19 @@ https://github.com/user-attachments/assets/874bc735-c11d-4ae6-9cdc-2db1082d2a5b
 
 作者：[Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.3.1` 将 Google GNM Head v3、MIT FaceCap 52 头像、MediaPipe Face Landmarker、
+GNM Studio `1.4.0` 将 Google GNM Head v3、MIT FaceCap 52 头像、MediaPipe Face Landmarker、
 Three.js、Rust 与 Tauri 整合到便携式 Windows 应用，并提供用于在线体验跟踪与
 动画流程的 GitHub Pages 版本。它可通过摄像头驱动头像、录制面部动作和视频，
 并把动画导出到 Blender。普通用户无需安装 Python、Node.js、Rust 或 CUDA；
-两个版本都支持带种子身份生成：桌面版使用精确的原生 Rust 求值器；网页版在独立
-Worker 中计算紧凑的量化基底，从而避免阻塞界面。
+两个版本都支持带种子身份生成和实验性的照片引导 Custom Head 拟合：桌面版使用
+精确的原生 Rust 求值器；网页版在独立 Worker 中计算紧凑的量化基底，从而避免阻塞界面。
 
 ## 下载与运行
 
 1. 从 [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases)
    下载最新的 Windows x64 压缩包。
 2. 解压到可写目录，例如 `C:\AI\GNM-Studio\`。
-3. 运行 `GNM-Studio-v1.3.1.exe`。
+3. 运行 `GNM-Studio-v1.4.0.exe`。
 4. 如需实时捕捉，请允许摄像头和/或麦克风权限；手动编辑可选择
    **Continue without capture**。
 5. 跟踪录制前保持放松的中性表情，并点击 **Calibrate neutral**。
@@ -64,8 +64,10 @@ Worker 中计算紧凑的量化基底，从而避免阻塞界面。
 网页版包含基础 GNM 头像与 FaceCap 52 头像、MediaPipe GPU/CPU 跟踪、校准、叠加、关键点、智能
 平滑、表情和冻结、PBR 皮肤、背景、动作/视频录制、回放、JSON 导入导出、动画
 GLB、浏览器 MP4/WebM 保存，以及在专用 Web Worker 中运行的 GNM 带种子身份生成。
-MP4 能力取决于浏览器编码器。身份基底只会在首次应用 Create 时延迟下载，之后可由
-浏览器正常缓存。精确的原生 Rust 身份求值与系统 FFmpeg 集成仍仅桌面版提供。
+实验性 Custom Head 可使用一张正面照片，并可选添加一张 45–60° 照片；同样的受约束
+本地几何拟合不会上传照片。MP4 能力取决于浏览器编码器。身份基底只会在首次应用
+Create 时延迟下载；可选的双视图 DINOv3 验证会在首次使用时下载并缓存 Q4 ONNX 模型。
+精确的原生 Rust 身份求值与系统 FFmpeg 集成仍仅桌面版提供。
 
 网页版已针对手机和平板调整：实时视口优先显示，模型、捕捉、图层、材质、录制与导出
 控制仍可在其下方使用，并采用适合触控的按钮与可横向滚动的工具栏。
@@ -83,6 +85,9 @@ MP4 能力取决于浏览器编码器。身份基底只会在首次应用 Create
   上下牙齿为白色，口腔软组织为粉红色且不会受到皮肤材质影响。
 - 现代卡片式 GNM / FaceCap 动捕模型选择器；FaceCap 提供分组的 52 通道滑块和独立冻结锁。
 - 带种子的身份生成，以及外观表达和人群混合控制。
+- 实验性照片引导 Custom Head：MediaPipe 从正面照片及可选的 45–60° 照片对齐
+  118 个稳定解剖关键点，再由鲁棒受约束求解器在有效 GNM 身份采样得到的 48 模态
+  子空间内拟合。DINOv3 仅验证可选双视图的一致性，不重建网格，也不会上传照片。
 - MediaPipe 摄像头跟踪：478 个面部关键点、52 个表情通道和面部变换矩阵，
   默认优先使用 GPU，失败时回退到 CPU。
 - 右键点击 Devices 或后端状态可选择 Auto、仅 GPU 或仅 CPU；探测失败的后端会变灰。
@@ -124,6 +129,8 @@ Windows 版在运行时**不会下载模型**。发布版 EXE 已包含：
 - MediaPipe WASM 加载器和二进制文件。
 - Google GNM Head v3 NPZ 数据。
 - GNM 运行时 GLB 与语义身份/表情解码器。
+- 118 点 Custom Head 几何运行时，以及用于可选离线双视图验证的固定版本
+  DINOv3 ViT-S/16 Q4 ONNX 模型。
 - 固定 Three.js r184 版本的 FaceCap 52 GLB 头像。
 - 用于离线解码 FaceCap 贴图的 Three.js Basis Universal/KTX2 转码器资源。
 - 程序生成的 Neutral 无着色贴图、五种本地皮肤颜色贴图及共享的 PBR 细节贴图。
@@ -133,7 +140,10 @@ Windows 版在运行时**不会下载模型**。发布版 EXE 已包含：
 摄像头画面与麦克风数据都保留在本机。网页版首次加载时会从 GitHub Pages 下载
 相同的模型、WASM、贴图与代码静态资源，并在浏览器本地处理；浏览器可能缓存这些
 资源。首次应用网页身份时还会延迟下载约 6.85 MB 的压缩量化 GNM 身份基底，并在
-独立 Worker 中求值；面部画面、摄像头帧、身份设置与生成顶点都不会上传。桌面版只有
+独立 Worker 中求值；面部画面、摄像头帧、身份设置与生成顶点都不会上传。仅正面照片
+的 Custom Head 拟合不会产生额外网络请求；网页版首次进行双视图拟合时会下载约
+15 MB 的 DINOv3 Q4 模型并可能保存在浏览器缓存中，两张照片仍只在本地处理。桌面版
+已内置该模型，不会在运行时下载。桌面版只有
 在用户主动打开外部链接时才会访问网络。极少数较旧的 Windows
 系统可能需要单独安装 Microsoft WebView2。
 
@@ -143,7 +153,8 @@ Windows 版在运行时**不会下载模型**。发布版 EXE 已包含：
 2. 检查 `Capture 2/2`（或部分连接状态）以及跟踪器状态。
 3. 在视口工具栏选择 **Overlay**、**Camera** 或 **Avatar**。
 4. 以放松表情面对摄像头并校准中性姿势。
-5. 使用 **Create** 调整身份，使用 **Edit** 调整表情。
+5. 使用 **Create** 调整带种子身份或进行实验性 Custom Head 照片拟合，使用
+   **Edit** 调整表情。
 6. 选择 Motion、Avatar video 或 Camera + avatar 录制模式。
 7. 点击 **Record** 开始表演，完成后点击 **Stop**。
 8. 打开 **Export** 并保存需要的格式。
@@ -179,7 +190,7 @@ Windows 版在运行时**不会下载模型**。发布版 EXE 已包含：
 | WebM 源文件 | WebView2 内部录制 WebM 时可选保存的未转换源文件 | 诊断或归档 |
 
 Blender 可编辑动画推荐使用 GLB。通过 **File → Import → glTF 2.0** 导入。
-`1.3.1` 暂不包含 Alembic 导出。
+`1.4.0` 暂不包含 Alembic 导出。
 默认导出文件名包含精确到秒的本地日期与时间，例如
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`。
 
@@ -198,6 +209,12 @@ Blender 可编辑动画推荐使用 GLB。通过 **File → Import → glTF 2.0*
 身份基底，并在专用 JavaScript Web Worker 中计算全部 17,821 个顶点。这样不会阻塞
 界面与跟踪线程，也不需要服务器处理。确定性测试覆盖压缩基底解析与变形输出；桌面版
 继续使用全精度原生路径，不会捆绑或执行网页身份基底。
+
+Custom Head 严格限制在已发布的 GNM 身份空间内。MediaPipe 提供 118 个尽量不受
+表情影响的解剖对应点；Worker 把它们规范化到面部局部 XYZ，并求解鲁棒的 48 模态
+身份拟合。仅一张正面照片即可工作；可选的 45–60° 照片会增强深度约束，而 DINOv3
+只检查两张照片是否可能属于同一人。它是比例匹配器，不是纹理迁移或不受约束的
+单图三维重建器。
 
 实时视口使用由上游语义解码器生成的 20 个 GNM 语义形变目标。GNM 没有提供
 ARKit 式下颌骨，因此 GNM Studio 额外加入平滑遮罩的下颌旋转形变，并由 MediaPipe
@@ -398,6 +415,9 @@ Tauri React 界面
 
 - [Google GNM](https://github.com/google/GNM)：GNM Head v3 与语义解码器。
 - [Google AI Edge MediaPipe](https://github.com/google-ai-edge/mediapipe)：本地面部跟踪。
+- [Meta DINOv3](https://github.com/facebookresearch/dinov3)、
+  [ONNX Community ViT-S/16 Q4 转换](https://huggingface.co/onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX)、
+  Transformers.js 与 ONNX Runtime Web：可选的本地双视图一致性验证。
 - [Face Cap](https://www.bannaflak.com/face-cap/) 与固定版本的
   [Three.js r184 FaceCap 模型](https://github.com/mrdoob/three.js/blob/r184/examples/models/gltf/facecap.glb)：MIT 许可的 52 通道动捕头像。
 - [Mediabunny](https://github.com/Vanilagy/mediabunny)：便携 WebCodecs 媒体转换与 AAC 后备编码。
@@ -424,5 +444,7 @@ Google GNM 同样使用 Apache-2.0，其上游许可证位于
 本仓库的 `third_party/google-gnm/LICENSE`。
 捆绑依赖的许可证与对应源代码信息见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+内置的 DINOv3 模型文件仍受 Meta DINOv3 License 约束；许可证副本与模型一同嵌入，
+Windows 便携包中另附 `DINOV3-LICENSE.txt`。
 根据提供的素材信息，实验性皮肤贴图使用 MIT 许可证；公开再分发前仍需补充原作者、
 版权行与原始来源。

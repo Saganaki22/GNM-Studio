@@ -24,13 +24,44 @@ function webRuntimeAssetPlugin(): Plugin {
   }
 }
 
+const desktopDinoRoot = new URL(
+  './desktop-assets/models/huggingface/onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX/',
+  import.meta.url,
+)
+const desktopDinoFiles = [
+  'config.json',
+  'preprocessor_config.json',
+  'LICENSE.md',
+  'onnx/model_q4.onnx',
+  'onnx/model_q4.onnx_data',
+] as const
+
+function desktopDinoAssetPlugin(): Plugin {
+  return {
+    name: 'gnm-desktop-dinov3-assets',
+    apply: 'build',
+    buildStart() {
+      for (const file of desktopDinoFiles) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `models/huggingface/onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX/${file}`,
+          source: readFileSync(new URL(file, desktopDinoRoot)),
+        })
+      }
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const webBuild = mode === 'web'
   return {
     // Project Pages is hosted below the account's custom-domain root.
     base: webBuild ? '/GNM-Studio/' : '/',
-    plugins: [react(), ...(webBuild ? [webRuntimeAssetPlugin()] : [])],
+    plugins: [
+      react(),
+      ...(webBuild ? [webRuntimeAssetPlugin()] : [desktopDinoAssetPlugin()]),
+    ],
     define: {
       __APP_VERSION__: JSON.stringify(packageVersion),
       __GNM_WEB_BUILD__: JSON.stringify(webBuild),

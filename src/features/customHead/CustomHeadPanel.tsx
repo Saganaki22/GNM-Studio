@@ -88,7 +88,7 @@ export function CustomHeadPanel(props: CustomHeadPanelProps) {
       <button type="button" className="primary-button wide" disabled={!ready || busy || !customHead.recordingIdle} onClick={() => void customHead.fit()}>
         <ScanFace size={14} />{busy ? customHead.status === "applying" ? "Applying custom head…" : customHead.images.profile ? "Analyzing both views…" : "Analyzing front view…" : "Fit custom GNM head"}
       </button>
-      <p className="helper-copy custom-head-model-note">With two views, first use downloads and caches the optional DINOv3 ViT-S/16 Q4 ONNX model. Front-only fitting does not download DINOv3. Photos and fitted coefficients stay on this device. DINOv3 model weights use Meta’s DINOv3 license.</p>
+      <p className="helper-copy custom-head-model-note">{__GNM_WEB_BUILD__ ? "With two views, first use downloads and caches the optional DINOv3 ViT-S/16 Q4 ONNX model. " : "The Windows build includes the DINOv3 ViT-S/16 Q4 ONNX validator for offline use. "}Front-only fitting does not load DINOv3. Photos and fitted coefficients stay on this device. DINOv3 model weights use Meta’s DINOv3 license.</p>
     </div>
   </details>;
 }

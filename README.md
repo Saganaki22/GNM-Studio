@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.3.1-54ddb2" alt="Release v1.3.1"></a>
+  <a href="https://github.com/Saganaki22/GNM-Studio/releases"><img src="https://img.shields.io/badge/release-v1.4.0-54ddb2" alt="Release v1.4.0"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
   <a href="https://drbaph.is-a.dev/GNM-Studio/"><img src="https://img.shields.io/badge/web-GitHub%20Pages-222222" alt="GitHub Pages web edition"></a>
   <img src="https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB" alt="Tauri 2 and React">
@@ -28,12 +28,13 @@ https://github.com/user-attachments/assets/e1449cad-ea74-4912-b77a-a0effe41c102
 
 Author: [Saganaki22](https://github.com/Saganaki22)
 
-GNM Studio `1.3.1` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
+GNM Studio `1.4.0` combines Google GNM Head v3, the MIT FaceCap 52 avatar, MediaPipe Face Landmarker,
 Three.js, Rust, and Tauri in a portable Windows application, with a companion
 GitHub Pages edition for trying the tracking and animation workflow online. It
 can drive a head from a webcam, record facial motion and video, and export
-animation for Blender without requiring Python, Node.js, Rust, CUDA, or model
-downloads. Seeded identity generation is available in both editions: the desktop
+animation for Blender without requiring Python, Node.js, Rust, or CUDA. Seeded
+identity generation and experimental photo-guided Custom Head fitting are
+available in both editions: the desktop
 uses the exact native Rust evaluator, while the web edition evaluates a compact
 quantized basis in a dedicated worker so the interface stays responsive.
 
@@ -42,7 +43,7 @@ quantized basis in a dedicated worker so the interface stays responsive.
 1. Download the latest Windows x64 archive from
    [GitHub Releases](https://github.com/Saganaki22/GNM-Studio/releases).
 2. Extract it to a writable folder such as `C:\AI\GNM-Studio\`.
-3. Run `GNM-Studio-v1.3.1.exe`.
+3. Run `GNM-Studio-v1.4.0.exe`.
 4. Approve camera and/or microphone access if you want live capture, or choose
    **Continue without capture** for manual avatar work.
 5. For tracked performances, hold a neutral expression and use **Calibrate neutral**.
@@ -51,8 +52,8 @@ Two portable archives may be published:
 
 | Package | Use it when |
 | --- | --- |
-| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.3.1/GNM-Studio-1.3.1-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
-| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.3.1/GNM-Studio-1.3.1-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
+| [Standard portable ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.4.0/GNM-Studio-1.4.0-Windows-x64-Portable.zip) | Recommended. Best compatibility with antivirus and code signing. |
+| [Portable UPX ZIP](https://github.com/Saganaki22/GNM-Studio/releases/download/v1.4.0/GNM-Studio-1.4.0-Windows-x64-Portable-UPX.zip) | Smaller packed executable. Use if your antivirus accepts UPX-packed apps. |
 
 The application and all model assets are embedded. No installer is required.
 
@@ -67,10 +68,13 @@ The web edition includes the base GNM head and FaceCap 52 avatar, MediaPipe GPU/
 calibration, overlays, landmarks, smoothing, expressions and locks, PBR skin,
 backgrounds, motion/video recording, playback, JSON import/export, animated GLB
 export, browser-based MP4/WebM saving, and seeded GNM identity generation in a
-dedicated Web Worker. Browser codec support determines MP4 availability. The
-web identity basis is downloaded lazily the first time Create is applied and is
-then eligible for normal browser caching. The exact native Rust identity
-evaluator and system FFmpeg integration remain desktop-only.
+dedicated Web Worker. Experimental Custom Head accepts a straight-on image and
+an optional 45–60° image, then performs the same constrained local geometry fit
+without uploading either photo. Browser codec support determines MP4
+availability. The web identity basis is downloaded lazily the first time Create
+is applied; optional two-view DINOv3 validation downloads and caches its Q4 ONNX
+model on first use. The exact native Rust evaluator and system FFmpeg integration
+remain desktop-only.
 
 The hosted interface is phone- and tablet-responsive: the live viewport stays
 first, while model, capture, layer, material, recording, and export controls
@@ -94,6 +98,11 @@ lives at its `GNM-Studio` subpath.
   identity workflow, while FaceCap exposes grouped 52-channel sliders and
   independent freeze locks.
 - Seeded identity creation with presentation and population blending controls.
+- Experimental photo-guided Custom Head fitting: MediaPipe aligns 118 stable
+  anatomical landmarks from one front image and an optional 45–60° image, then
+  a robust constrained solver fits a 48-mode subspace sampled from valid GNM
+  identities. DINOv3 is used only to validate optional cross-view agreement; it
+  does not reconstruct the mesh or upload photos.
 - MediaPipe webcam tracking with 478 face landmarks, 52 tracking blendshapes,
   a facial transformation matrix, GPU-first execution, and CPU fallback.
 - Right-click tracking selector for persisted Auto, GPU-only, or CPU-only mode,
@@ -149,6 +158,8 @@ are bundled into the release executable:
 - MediaPipe WASM loaders and binaries.
 - Google GNM Head v3 NPZ data.
 - Runtime GNM GLB and semantic identity/expression decoders.
+- The 118-point Custom Head geometry runtime and the pinned DINOv3 ViT-S/16 Q4
+  ONNX model used for optional offline two-view validation.
 - The pinned Three.js r184 FaceCap 52 GLB avatar.
 - Three.js Basis Universal/KTX2 transcoder assets for FaceCap's offline textures.
 - A procedural neutral/no-tint skin map, five local skin-tone variants, and their shared PBR detail maps.
@@ -161,7 +172,10 @@ GitHub Pages as needed and processes capture locally afterward; browser caching
 may retain those assets. Applying a web identity lazily downloads an additional
 compressed 6.85 MB quantized GNM identity basis and evaluates it in a dedicated
 worker—no face, camera, identity settings, or generated vertices are uploaded.
-The desktop edition only uses internet access
+Front-only Custom Head fitting adds no network request. The web edition downloads
+the optional approximately 15 MB DINOv3 Q4 model on the first two-view fit and
+may retain it in the browser cache; both photos remain local. The desktop bundles
+that model and does not download it at runtime. The desktop edition only uses internet access
 when you deliberately open an external link. On an unusually old Windows
 installation, Microsoft WebView2 may need to be installed separately.
 
@@ -172,7 +186,8 @@ installation, Microsoft WebView2 may need to be installed separately.
 2. Check `Capture 2/2` (or the applicable partial state) and tracker status.
 3. Choose **Overlay**, **Camera**, or **Avatar** in the viewport toolbar.
 4. Face the camera with a relaxed expression and calibrate the neutral pose.
-5. Use **Create** for identity controls and **Edit** for expression controls.
+5. Use **Create** for seeded identity controls or experimental Custom Head photo
+   fitting, and **Edit** for expression controls.
 6. Choose Motion, Avatar video, or Camera + avatar recording mode.
 7. Press **Record**, perform, then press **Stop**.
 8. Open **Export** and save the required format.
@@ -212,7 +227,7 @@ unless muted, and the completed source is reused without re-recording.
 | WebM source | Optional unconverted source when WebView2 recorded WebM internally | Diagnostics or archival |
 
 For Blender, animated GLB is the recommended editable export. Import it with
-**File → Import → glTF 2.0**. Alembic export is not part of `1.3.1`.
+**File → Import → glTF 2.0**. Alembic export is not part of `1.4.0`.
 Export defaults include local date and time down to seconds, for example
 `GNM-Studio_2026-07-16_18-42-07_animation.glb`.
 
@@ -236,6 +251,14 @@ vertices in a dedicated JavaScript Web Worker. This keeps the UI/tracker thread
 free and avoids any server processing. Deterministic tests cover the compressed
 basis parser and deformation output; the desktop continues using the full-
 precision native path and does not bundle or execute the browser basis.
+
+Custom Head fitting is deliberately constrained to the released GNM identity
+space. MediaPipe supplies 118 expression-resistant anatomical correspondences;
+the worker canonicalizes them into face-local XYZ and solves a robust 48-mode
+identity fit. A front image is sufficient. An optional 45–60° image improves
+depth constraints, while DINOv3 only checks that both views plausibly show the
+same person. It is a proportion matcher, not texture transfer or unconstrained
+single-image 3D reconstruction.
 
 The live GNM viewport uses 20 semantic morph targets derived from the upstream
 semantic decoder. Because GNM does not expose an ARKit-style jaw bone, GNM
@@ -456,6 +479,9 @@ GNM Studio builds on:
 
 - [Google GNM](https://github.com/google/GNM) for GNM Head v3 and semantic decoders.
 - [Google AI Edge MediaPipe](https://github.com/google-ai-edge/mediapipe) for local face tracking.
+- [Meta DINOv3](https://github.com/facebookresearch/dinov3), the
+  [ONNX Community ViT-S/16 Q4 conversion](https://huggingface.co/onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX),
+  Transformers.js, and ONNX Runtime Web for optional local cross-view validation.
 - [Face Cap](https://www.bannaflak.com/face-cap/) and the pinned
   [Three.js r184 FaceCap model](https://github.com/mrdoob/three.js/blob/r184/examples/models/gltf/facecap.glb)
   for the MIT-licensed 52-target mocap avatar.
@@ -485,6 +511,8 @@ available in [Google's GNM repository](https://github.com/google/GNM/blob/main/L
 and is preserved locally at `third_party/google-gnm/LICENSE`.
 Bundled dependency licenses and matching-source information are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The bundled DINOv3 model files remain under Meta's DINOv3 License; a copy is
+embedded with the model and included as `DINOV3-LICENSE.txt` in Windows packages.
 The experimental skin maps are MIT-licensed according to the supplied asset
 information; their original author/copyright attribution must be added before
 public redistribution.
